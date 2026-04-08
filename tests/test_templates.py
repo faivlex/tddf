@@ -33,3 +33,14 @@ def test_render_openclaw_template_loads(tmp_path) -> None:
 
     assert config.target.kind == "openclaw"
     assert config.scenario_definitions[0].requires_mcp is False
+
+
+def test_render_langgraph_template_loads(tmp_path) -> None:
+    config_path = tmp_path / "langgraph.yaml"
+    config_path.write_text(render_config(TemplateAdapter.LANGGRAPH))
+
+    config = load_config(config_path)
+
+    assert config.target.kind == "langgraph"
+    assert config.target.langgraph.graph == "your_package.your_graph_module:graph"
+    assert config.scenario_definitions[0].requires_mcp is True

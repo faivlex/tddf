@@ -50,6 +50,23 @@ def test_init_rejects_existing_file_without_force(tmp_path: Path) -> None:
     assert "Refusing to overwrite existing config" in result.stdout
 
 
+def test_init_writes_loadable_langgraph_template(tmp_path: Path) -> None:
+    config_path = tmp_path / "tddf-langgraph.yaml"
+
+    result = runner.invoke(
+        app,
+        ["init", "--config", str(config_path), "--adapter", "langgraph"],
+    )
+
+    assert result.exit_code == 0
+    assert config_path.exists()
+
+    config = load_config(config_path)
+    assert config.target.kind == "langgraph"
+    assert config.target.langgraph.use_thread_id is True
+    assert config.scenario_definitions[0].requires_mcp is True
+
+
 def test_import_injecagent_writes_registry(tmp_path: Path) -> None:
     output_path = tmp_path / "injecagent.yaml"
     source_path = Path("tests/fixtures/injecagent").resolve()

@@ -90,7 +90,7 @@ def init(
         False, "--force", help="Overwrite an existing config file."
     ),
 ) -> None:
-    """Generate a starter config file for a target adapter (command, hermes, openclaw)."""
+    """Generate a starter config file for a target adapter."""
     resolved_config = config.resolve()
     if resolved_config.exists() and not force:
         console.print(
