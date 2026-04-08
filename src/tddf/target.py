@@ -9,7 +9,12 @@ from tempfile import TemporaryDirectory
 
 import yaml
 
-from tddf.config import CommandTargetConfig, HermesTargetConfig, TddfConfig
+from tddf.config import (
+    CommandTargetConfig,
+    HermesTargetConfig,
+    OpenClawTargetConfig,
+    TddfConfig,
+)
 
 
 @dataclass(slots=True)
@@ -60,11 +65,47 @@ def _build_hermes_command(target: HermesTargetConfig, prompt: str) -> list[str]:
     return command
 
 
+def _build_openclaw_command(target: OpenClawTargetConfig, prompt: str) -> list[str]:
+    command = [*target.openclaw.command_prefix, "agent", "--message", prompt]
+    if target.openclaw.local:
+        command.append("--local")
+    command.append("--json")
+    if target.openclaw.agent:
+        command.extend(["--agent", target.openclaw.agent])
+    if target.openclaw.thinking:
+        command.extend(["--thinking", target.openclaw.thinking])
+    if target.openclaw.verbose:
+        command.extend(["--verbose", target.openclaw.verbose])
+    if target.openclaw.timeout_seconds is not None:
+        command.extend(["--timeout", str(target.openclaw.timeout_seconds)])
+    command.extend(target.openclaw.extra_args)
+    return command
+
+
+def _load_mapping_file(path: Path) -> tuple[dict[str, object], str | None]:
+    if not path.exists():
+        return {}, None
+    try:
+        payload = yaml.safe_load(path.read_text())
+    except yaml.YAMLError as error:
+        return {}, str(error)
+    if payload is None:
+        return {}, None
+    if isinstance(payload, dict):
+        return payload, None
+    return {}, "Config root must be a mapping."
+
+
 def _maybe_prepare_hermes_home(
     config: TddfConfig,
     mcp_url: str | None,
-) -> tuple[dict[str, str], list[TemporaryDirectory[str]], dict[str, object], dict[str, str]]:
-    if not isinstance(config.target, HermesTargetConfig) or not config.target.hermes.use_temp_home:
+) -> tuple[
+    dict[str, str], list[TemporaryDirectory[str]], dict[str, object], dict[str, str]
+]:
+    if (
+        not isinstance(config.target, HermesTargetConfig)
+        or not config.target.hermes.use_temp_home
+    ):
         return {}, [], {}, {}
 
     cleanup_dirs: list[TemporaryDirectory[str]] = []
@@ -113,7 +154,94 @@ def _maybe_prepare_hermes_home(
         "mcp_config_present": config_path.exists(),
     }
 
-    return {"HERMES_HOME": str(temp_home_path)}, cleanup_dirs, metadata, artifact_contents
+    return (
+        {"HERMES_HOME": str(temp_home_path)},
+        cleanup_dirs,
+        metadata,
+        artifact_contents,
+    )
+
+
+def _maybe_prepare_openclaw_home(
+    config: TddfConfig,
+    mcp_url: str | None,
+    cwd: Path,
+    workspace_path: Path | None,
+) -> tuple[
+    dict[str, str], list[TemporaryDirectory[str]], dict[str, object], dict[str, str]
+]:
+    if not isinstance(config.target, OpenClawTargetConfig):
+        return {}, [], {}, {}
+
+    metadata: dict[str, object] = {
+        "kind": "openclaw",
+        "command_prefix": list(config.target.openclaw.command_prefix),
+        "agent": config.target.openclaw.agent,
+        "thinking": config.target.openclaw.thinking,
+        "verbose": config.target.openclaw.verbose,
+        "timeout_seconds": config.target.openclaw.timeout_seconds,
+        "local": config.target.openclaw.local,
+        "extra_args": list(config.target.openclaw.extra_args),
+        "use_temp_home": config.target.openclaw.use_temp_home,
+        "inject_mcp_config": config.target.openclaw.inject_mcp_config,
+    }
+    if not config.target.openclaw.use_temp_home:
+        return {}, [], metadata, {}
+
+    cleanup_dirs: list[TemporaryDirectory[str]] = []
+    temp_home = TemporaryDirectory(prefix="tddf-openclaw-home-")
+    cleanup_dirs.append(temp_home)
+    temp_home_path = Path(temp_home.name)
+    state_dir = temp_home_path / ".openclaw"
+    state_dir.mkdir(parents=True, exist_ok=True)
+
+    base_home = config.target.openclaw.base_home_dir
+    if base_home is None and "OPENCLAW_HOME" in os.environ:
+        base_home = Path(os.environ["OPENCLAW_HOME"])
+    if base_home is None:
+        base_home = Path.home()
+
+    copied_state_dir = base_home / ".openclaw"
+    _copy_tree_if_exists(copied_state_dir, state_dir)
+
+    config_path = state_dir / "openclaw.json"
+    config_payload, parse_error = _load_mapping_file(config_path)
+    if parse_error is not None:
+        metadata["config_parse_error"] = parse_error
+    if not isinstance(config_payload.get("agents"), dict):
+        config_payload["agents"] = {}
+    agents_payload = config_payload["agents"]
+    if isinstance(agents_payload, dict):
+        defaults_payload = agents_payload.setdefault("defaults", {})
+        if isinstance(defaults_payload, dict):
+            defaults_payload["workspace"] = str(workspace_path or cwd)
+    if config.target.openclaw.inject_mcp_config and mcp_url is not None:
+        mcp_payload = config_payload.setdefault("mcp", {})
+        if isinstance(mcp_payload, dict):
+            servers_payload = mcp_payload.setdefault("servers", {})
+            if isinstance(servers_payload, dict):
+                servers_payload["tddf"] = {"url": mcp_url}
+    config_path.write_text(json.dumps(config_payload, indent=2) + "\n")
+
+    artifact_contents: dict[str, str] = {}
+    if config_path.exists():
+        artifact_contents["openclaw_config.json"] = config_path.read_text()
+
+    metadata.update(
+        {
+            "temp_home_dir": str(temp_home_path),
+            "state_dir": str(state_dir),
+            "config_path": str(config_path),
+            "config_present": config_path.exists(),
+        }
+    )
+
+    env = {
+        "OPENCLAW_HOME": str(temp_home_path),
+        "OPENCLAW_STATE_DIR": str(state_dir),
+        "OPENCLAW_CONFIG_PATH": str(config_path),
+    }
+    return env, cleanup_dirs, metadata, artifact_contents
 
 
 def build_target_invocation(
@@ -130,6 +258,7 @@ def build_target_invocation(
     workspace_path: Path | None = None,
 ) -> TargetInvocation:
     env = os.environ.copy()
+    cwd = resolve_target_cwd(config, config_path)
     env.update(
         build_target_environment(
             config,
@@ -144,7 +273,6 @@ def build_target_invocation(
             workspace_path,
         )
     )
-    cwd = resolve_target_cwd(config, config_path)
     cleanup_dirs: list[TemporaryDirectory[str]] = []
     adapter_name = "command"
     adapter_metadata: dict[str, object] = {"kind": "command"}
@@ -152,7 +280,7 @@ def build_target_invocation(
 
     if isinstance(config.target, CommandTargetConfig):
         command = config.target.command
-    else:
+    elif isinstance(config.target, HermesTargetConfig):
         adapter_name = "hermes"
         hermes_env, hermes_cleanup_dirs, adapter_metadata, adapter_artifact_contents = (
             _maybe_prepare_hermes_home(config, mcp_url)
@@ -160,6 +288,18 @@ def build_target_invocation(
         env.update(hermes_env)
         cleanup_dirs.extend(hermes_cleanup_dirs)
         command = _build_hermes_command(config.target, prompt)
+    else:
+        adapter_name = "openclaw"
+        (
+            openclaw_env,
+            openclaw_cleanup_dirs,
+            adapter_metadata,
+            adapter_artifact_contents,
+        ) = _maybe_prepare_openclaw_home(config, mcp_url, cwd, workspace_path)
+        env.update(openclaw_env)
+        cleanup_dirs.extend(openclaw_cleanup_dirs)
+        adapter_metadata.setdefault("config_present", False)
+        command = _build_openclaw_command(config.target, prompt)
 
     return TargetInvocation(
         command=command,
@@ -172,7 +312,9 @@ def build_target_invocation(
     )
 
 
-def _extract_trace(stdout: str, prefix: str) -> tuple[dict[str, object] | None, str | None]:
+def _extract_trace(
+    stdout: str, prefix: str
+) -> tuple[dict[str, object] | None, str | None]:
     for line in reversed(stdout.splitlines()):
         if not line.startswith(prefix):
             continue
@@ -188,6 +330,21 @@ def _extract_trace(stdout: str, prefix: str) -> tuple[dict[str, object] | None, 
 
 def _extract_hermes_trace(stdout: str) -> tuple[dict[str, object] | None, str | None]:
     return _extract_trace(stdout, "TDDF_HERMES_TRACE=")
+
+
+def _extract_openclaw_result(
+    stdout: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    text = stdout.strip()
+    if not text:
+        return None, None
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError as error:
+        return None, str(error)
+    if isinstance(payload, dict):
+        return payload, None
+    return {"value": payload}, None
 
 
 def collect_adapter_observability(
@@ -206,7 +363,29 @@ def collect_adapter_observability(
         if trace_error is not None:
             adapter_metadata["trace_parse_error"] = trace_error
         if trace_payload is not None:
-            adapter_artifact_contents["hermes_trace.json"] = json.dumps(trace_payload, indent=2) + "\n"
+            adapter_artifact_contents["hermes_trace.json"] = (
+                json.dumps(trace_payload, indent=2) + "\n"
+            )
+    elif invocation.adapter_name == "openclaw":
+        result_payload, result_error = _extract_openclaw_result(stdout)
+        adapter_metadata["stdout_line_count"] = len(stdout.splitlines())
+        adapter_metadata["stderr_line_count"] = len(stderr.splitlines())
+        adapter_metadata["json_captured"] = result_payload is not None
+        if result_error is not None:
+            adapter_metadata["json_parse_error"] = result_error
+        if result_payload is not None:
+            adapter_metadata["response_status"] = result_payload.get("status")
+            result_section = result_payload.get("result")
+            if isinstance(result_section, dict):
+                payloads = result_section.get("payloads")
+                if isinstance(payloads, list):
+                    adapter_metadata["payload_count"] = len(payloads)
+                meta = result_section.get("meta")
+                if isinstance(meta, dict) and "mcp_server_count" in meta:
+                    adapter_metadata["mcp_server_count"] = meta["mcp_server_count"]
+            adapter_artifact_contents["openclaw_result.json"] = (
+                json.dumps(result_payload, indent=2) + "\n"
+            )
 
     return AdapterObservability(
         adapter_name=invocation.adapter_name,
@@ -218,7 +397,11 @@ def collect_adapter_observability(
 def describe_target(config: TddfConfig) -> str:
     if isinstance(config.target, CommandTargetConfig):
         return " ".join(config.target.command)
-    return " ".join(config.target.hermes.command_prefix + ["chat", "-q", "<prompt>"])
+    if isinstance(config.target, HermesTargetConfig):
+        return " ".join(
+            config.target.hermes.command_prefix + ["chat", "-q", "<prompt>"]
+        )
+    return " ".join(_build_openclaw_command(config.target, "<prompt>"))
 
 
 def build_target_environment(

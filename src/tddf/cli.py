@@ -32,17 +32,24 @@ def _normalize_for_output(payload: object) -> object:
     if isinstance(payload, Path):
         return str(payload)
     if isinstance(payload, dict):
-        return {str(key): _normalize_for_output(value) for key, value in payload.items()}
+        return {
+            str(key): _normalize_for_output(value) for key, value in payload.items()
+        }
     if isinstance(payload, list):
         return [_normalize_for_output(item) for item in payload]
     return payload
 
-app = typer.Typer(help="TDDF: deterministic agent-trap evaluations for local command targets.")
+
+app = typer.Typer(
+    help="TDDF: deterministic agent-trap evaluations for local command targets."
+)
 console = Console()
 
 
 @app.command()
-def validate(config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False)) -> None:
+def validate(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+) -> None:
     """Validate a TDDF configuration file."""
     try:
         loaded = load_config(config)
@@ -54,8 +61,12 @@ def validate(config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists
         f"[green]Configuration valid[/green] for target: {describe_target(loaded)}"
     )
     console.print(f"[green]Target kind:[/green] {loaded.target.kind}")
-    console.print(f"[green]Target capabilities:[/green] {_format_capabilities(loaded.target_capabilities)}")
-    console.print(f"[green]Harness capabilities:[/green] {_format_capabilities(loaded.harness_capabilities)}")
+    console.print(
+        f"[green]Target capabilities:[/green] {_format_capabilities(loaded.target_capabilities)}"
+    )
+    console.print(
+        f"[green]Harness capabilities:[/green] {_format_capabilities(loaded.harness_capabilities)}"
+    )
     console.print(f"[green]Scenarios:[/green] {len(loaded.scenario_definitions)}")
     console.print("[green]Scenario requirements:[/green]")
     for scenario_id, requirements in _describe_scenario_requirements(loaded):
@@ -67,10 +78,19 @@ def validate(config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists
         ).strip()
         console.print("[green]Hermes options:[/green]")
         console.print(hermes_payload)
+    if loaded.target.kind == "openclaw":
+        openclaw_payload = yaml.safe_dump(
+            _normalize_for_output(loaded.target.openclaw.model_dump(mode="python")),
+            sort_keys=False,
+        ).strip()
+        console.print("[green]OpenClaw options:[/green]")
+        console.print(openclaw_payload)
 
 
 @app.command()
-def run(config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False)) -> None:
+def run(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+) -> None:
     """Execute a deterministic TDDF evaluation."""
     try:
         loaded = load_config(config)
@@ -82,7 +102,10 @@ def run(config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=Fals
     batch = asyncio.run(execute_run(loaded, resolved_config_path))
     artifacts_dir = resolve_artifacts_dir(loaded, resolved_config_path)
     artifacts = (
-        {result.scenario_id: result.write_artifacts(artifacts_dir) for result in batch.results}
+        {
+            result.scenario_id: result.write_artifacts(artifacts_dir)
+            for result in batch.results
+        }
         if loaded.output.write_json
         else None
     )
@@ -92,7 +115,8 @@ def run(config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=Fals
         target_capabilities=loaded.target_capabilities,
         harness_capabilities=loaded.harness_capabilities,
         scenario_requirements={
-            scenario.id: scenario.required_capabilities for scenario in loaded.scenario_definitions
+            scenario.id: scenario.required_capabilities
+            for scenario in loaded.scenario_definitions
         },
     )
     if batch.status in {"failed", "error", "timeout"}:

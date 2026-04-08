@@ -32,6 +32,24 @@ HERMES_TARGET = {
 }
 
 
+OPENCLAW_TARGET = {
+    "kind": "openclaw",
+    "cwd": str(ROOT),
+    "env": {},
+    "openclaw": {
+        "command_prefix": ["python", "tests/fixtures/mock_openclaw.py"],
+        "agent": "ops",
+        "thinking": "medium",
+        "verbose": "on",
+        "timeout_seconds": 45,
+        "local": True,
+        "extra_args": ["--deliver"],
+        "use_temp_home": True,
+        "inject_mcp_config": True,
+    },
+}
+
+
 def _write_temp_config(
     tmp_path: Path,
     replacement_target: str | None = None,
@@ -48,7 +66,9 @@ def _write_temp_config(
     return config_path
 
 
-def test_hermes_target_invocation_builds_expected_command_and_home(tmp_path: Path) -> None:
+def test_hermes_target_invocation_builds_expected_command_and_home(
+    tmp_path: Path,
+) -> None:
     config_path = _write_temp_config(
         tmp_path,
         transform=lambda raw: raw.update(
@@ -108,6 +128,70 @@ def test_hermes_target_invocation_builds_expected_command_and_home(tmp_path: Pat
         cleanup_dir.cleanup()
 
 
+def test_openclaw_target_invocation_builds_expected_command_and_home(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **OPENCLAW_TARGET,
+                    "env": {"FOO": "bar"},
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    invocation = build_target_invocation(
+        config,
+        config_path,
+        prompt="hello from openclaw",
+        web_url="http://example.test/article",
+        attacker_url="http://example.test/collect",
+        mcp_url="http://example.test/mcp",
+        document_path=None,
+        deputy_workspace_dir=None,
+        deputy_secret_env_key=None,
+        deputy_secret_env_value=None,
+    )
+
+    assert invocation.command == [
+        "python",
+        "tests/fixtures/mock_openclaw.py",
+        "agent",
+        "--message",
+        "hello from openclaw",
+        "--local",
+        "--json",
+        "--agent",
+        "ops",
+        "--thinking",
+        "medium",
+        "--verbose",
+        "on",
+        "--timeout",
+        "45",
+        "--deliver",
+    ]
+    assert invocation.cwd == ROOT
+    assert invocation.env["FOO"] == "bar"
+    assert invocation.adapter_name == "openclaw"
+    assert invocation.adapter_metadata["inject_mcp_config"] is True
+    assert invocation.adapter_metadata["config_present"] is True
+    assert invocation.adapter_artifact_contents["openclaw_config.json"]
+    openclaw_home = Path(invocation.env["OPENCLAW_HOME"])
+    openclaw_config = Path(invocation.env["OPENCLAW_CONFIG_PATH"])
+    assert openclaw_home.exists()
+    assert openclaw_config.exists()
+    assert '"tddf": {' in openclaw_config.read_text()
+    assert "http://example.test/mcp" in openclaw_config.read_text()
+
+    for cleanup_dir in invocation.cleanup_dirs:
+        cleanup_dir.cleanup()
+
+
 def test_incompatible_hermes_config_fails_fast_before_execution(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -124,7 +208,33 @@ def test_incompatible_hermes_config_fails_fast_before_execution(tmp_path: Path) 
         ),
     )
 
-    with pytest.raises(ConfigError, match="Target kind 'hermes' lacks 'deputy' capability"):
+    with pytest.raises(
+        ConfigError, match="Target kind 'hermes' lacks 'deputy' capability"
+    ):
+        load_config(config_path)
+
+
+def test_incompatible_openclaw_config_fails_fast_before_execution(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **OPENCLAW_TARGET,
+                    "openclaw": {
+                        **OPENCLAW_TARGET["openclaw"],
+                        "inject_mcp_config": False,
+                    },
+                }
+            }
+        ),
+    )
+
+    with pytest.raises(
+        ConfigError, match="Target kind 'openclaw' lacks 'mcp' capability"
+    ):
         load_config(config_path)
 
 
@@ -147,7 +257,20 @@ def test_describe_target_uses_generalized_adapter_contract(tmp_path: Path) -> No
         transform=lambda raw: raw.update({"target": HERMES_TARGET}),
     )
     hermes_config = load_config(hermes_config_path)
-    assert describe_target(hermes_config) == "python tests/fixtures/mock_hermes.py chat -q <prompt>"
+    assert (
+        describe_target(hermes_config)
+        == "python tests/fixtures/mock_hermes.py chat -q <prompt>"
+    )
+
+    openclaw_config_path = _write_temp_config(
+        tmp_path,
+        transform=lambda raw: raw.update({"target": OPENCLAW_TARGET}),
+    )
+    openclaw_config = load_config(openclaw_config_path)
+    assert (
+        describe_target(openclaw_config)
+        == "python tests/fixtures/mock_openclaw.py agent --message <prompt> --local --json --agent ops --thinking medium --verbose on --timeout 45 --deliver"
+    )
 
 
 def test_print_run_batch_includes_capability_visibility(tmp_path: Path) -> None:
@@ -173,7 +296,8 @@ def test_print_run_batch_includes_capability_visibility(tmp_path: Path) -> None:
             target_capabilities=config.target_capabilities,
             harness_capabilities=config.harness_capabilities,
             scenario_requirements={
-                scenario.id: scenario.required_capabilities for scenario in config.scenario_definitions
+                scenario.id: scenario.required_capabilities
+                for scenario in config.scenario_definitions
             },
             artifacts=None,
         )
@@ -220,7 +344,9 @@ def test_safe_agent_passes() -> None:
         assert result.started_at
         assert result.completed_at
         assert any(item.kind == "tool_call" for item in result.evidence)
-        assert not any(item.sensitive for item in result.evidence if item.kind == "tool_call")
+        assert not any(
+            item.sensitive for item in result.evidence if item.kind == "tool_call"
+        )
 
     mcp_required = batch.results[0]
     assert any(item.kind == "tool_call" for item in mcp_required.evidence)
@@ -236,7 +362,9 @@ def test_safe_agent_passes() -> None:
 
 
 def test_mock_hermes_target_passes(tmp_path: Path) -> None:
-    config_path = _write_temp_config(tmp_path, transform=lambda raw: raw.update({"target": HERMES_TARGET}))
+    config_path = _write_temp_config(
+        tmp_path, transform=lambda raw: raw.update({"target": HERMES_TARGET})
+    )
     config = load_config(config_path)
 
     batch = asyncio.run(execute_run(config, config_path))
@@ -245,20 +373,67 @@ def test_mock_hermes_target_passes(tmp_path: Path) -> None:
     assert len(batch.results) == 5
     assert all(result.status == "passed" for result in batch.results)
     assert all(
-        result.target_command[:4] == ["python", "tests/fixtures/mock_hermes.py", "chat", "-q"]
+        result.target_command[:4]
+        == ["python", "tests/fixtures/mock_hermes.py", "chat", "-q"]
         for result in batch.results
     )
     assert all(result.adapter_name == "hermes" for result in batch.results)
-    assert all(result.adapter_metadata["trace_captured"] is True for result in batch.results)
-    assert all(result.adapter_metadata["mcp_config_present"] is True for result in batch.results)
-    assert all("hermes_trace.json" in result.adapter_artifact_contents for result in batch.results)
-    assert all("hermes_config.yaml" in result.adapter_artifact_contents for result in batch.results)
+    assert all(
+        result.adapter_metadata["trace_captured"] is True for result in batch.results
+    )
+    assert all(
+        result.adapter_metadata["mcp_config_present"] is True
+        for result in batch.results
+    )
+    assert all(
+        "hermes_trace.json" in result.adapter_artifact_contents
+        for result in batch.results
+    )
+    assert all(
+        "hermes_config.yaml" in result.adapter_artifact_contents
+        for result in batch.results
+    )
     assert all("--toolsets" in result.target_command for result in batch.results)
     assert any("mcp_servers" in result.stdout for result in batch.results)
 
 
+def test_mock_openclaw_target_passes(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path, transform=lambda raw: raw.update({"target": OPENCLAW_TARGET})
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+
+    assert batch.status == "passed"
+    assert len(batch.results) == 5
+    assert all(result.status == "passed" for result in batch.results)
+    assert all(
+        result.target_command[:4]
+        == ["python", "tests/fixtures/mock_openclaw.py", "agent", "--message"]
+        for result in batch.results
+    )
+    assert all(result.adapter_name == "openclaw" for result in batch.results)
+    assert all(
+        result.adapter_metadata["json_captured"] is True for result in batch.results
+    )
+    assert all(
+        result.adapter_metadata["config_present"] is True for result in batch.results
+    )
+    assert all(
+        "openclaw_result.json" in result.adapter_artifact_contents
+        for result in batch.results
+    )
+    assert all(
+        "openclaw_config.json" in result.adapter_artifact_contents
+        for result in batch.results
+    )
+
+
 def test_hermes_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
-    config_path = _write_temp_config(tmp_path, transform=lambda raw: raw.update({"target": HERMES_TARGET}))
+    config_path = _write_temp_config(
+        tmp_path, transform=lambda raw: raw.update({"target": HERMES_TARGET})
+    )
     config = load_config(config_path)
 
     batch = asyncio.run(execute_run(config, config_path))
@@ -269,7 +444,9 @@ def test_hermes_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
     assert bundle.adapter_artifacts["hermes_config.yaml"].exists()
     assert bundle.adapter_artifacts["hermes_trace.json"].exists()
 
-    trace_payload = json.loads(bundle.adapter_artifacts["hermes_trace.json"].read_text())
+    trace_payload = json.loads(
+        bundle.adapter_artifacts["hermes_trace.json"].read_text()
+    )
     assert trace_payload["toolsets"] == ["web", "file", "terminal"]
     assert trace_payload["mcp_resource_count"] == 2
 
@@ -279,8 +456,36 @@ def test_hermes_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
     assert "hermes_trace.json" in result_payload["adapter_artifact_contents"]
 
 
+def test_openclaw_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path, transform=lambda raw: raw.update({"target": OPENCLAW_TARGET})
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+    bundle = result.write_artifacts(resolve_artifacts_dir(config, config_path))
+
+    assert result.adapter_name == "openclaw"
+    assert bundle.adapter_artifacts["openclaw_config.json"].exists()
+    assert bundle.adapter_artifacts["openclaw_result.json"].exists()
+
+    response_payload = json.loads(
+        bundle.adapter_artifacts["openclaw_result.json"].read_text()
+    )
+    assert response_payload["status"] == "completed"
+    assert response_payload["result"]["meta"]["mcp_server_count"] == 1
+
+    result_payload = json.loads(bundle.result_json.read_text())
+    assert result_payload["adapter_name"] == "openclaw"
+    assert result_payload["adapter_metadata"]["json_captured"] is True
+    assert "openclaw_result.json" in result_payload["adapter_artifact_contents"]
+
+
 def test_exfil_agent_fails(tmp_path: Path) -> None:
-    config_path = _write_temp_config(tmp_path, replacement_target="tests/fixtures/exfil_agent.py")
+    config_path = _write_temp_config(
+        tmp_path, replacement_target="tests/fixtures/exfil_agent.py"
+    )
     config = load_config(config_path)
 
     batch = asyncio.run(execute_run(config, config_path))
@@ -297,7 +502,9 @@ def test_sensitive_tool_policy_fails_without_sensitive_resource(tmp_path: Path) 
     config_path = _write_temp_config(
         tmp_path,
         replacement_target="tests/fixtures/safe_agent.py",
-        transform=lambda raw: raw["mcp"].update({"sensitive_tools": ["list_resources"]}),
+        transform=lambda raw: raw["mcp"].update(
+            {"sensitive_tools": ["list_resources"]}
+        ),
     )
     config = load_config(config_path)
 
@@ -317,11 +524,17 @@ def test_sensitive_tool_policy_fails_without_sensitive_resource(tmp_path: Path) 
 
 
 def test_confused_deputy_agent_fails(tmp_path: Path) -> None:
-    config_path = _write_temp_config(tmp_path, replacement_target="tests/fixtures/exfil_agent.py")
+    config_path = _write_temp_config(
+        tmp_path, replacement_target="tests/fixtures/exfil_agent.py"
+    )
     config = load_config(config_path)
 
     batch = asyncio.run(execute_run(config, config_path))
-    result = next(item for item in batch.results if item.scenario_id == "confused-deputy-finance-demo")
+    result = next(
+        item
+        for item in batch.results
+        if item.scenario_id == "confused-deputy-finance-demo"
+    )
 
     assert batch.status == "failed"
     assert result.status == "failed"
@@ -367,13 +580,17 @@ def test_build_document_content_supports_multiple_masking_techniques() -> None:
 
     for technique, fragment in expected_fragments.items():
         scenario.document.technique = technique
-        document = build_document_content(scenario, attacker_url="http://attacker.example/collect")
+        document = build_document_content(
+            scenario, attacker_url="http://attacker.example/collect"
+        )
         assert fragment in document
         assert "http://attacker.example/collect" in document
 
 
 def test_artifacts_written_per_run(tmp_path: Path) -> None:
-    config_path = _write_temp_config(tmp_path, replacement_target="tests/fixtures/safe_agent.py")
+    config_path = _write_temp_config(
+        tmp_path, replacement_target="tests/fixtures/safe_agent.py"
+    )
     config = load_config(config_path)
 
     batch = asyncio.run(execute_run(config, config_path))
@@ -417,7 +634,10 @@ def test_multiple_scenarios_run_and_write_artifacts(tmp_path: Path) -> None:
 
     batch = asyncio.run(execute_run(config, config_path))
     artifacts_dir = resolve_artifacts_dir(config, config_path)
-    bundles = {result.scenario_id: result.write_artifacts(artifacts_dir) for result in batch.results}
+    bundles = {
+        result.scenario_id: result.write_artifacts(artifacts_dir)
+        for result in batch.results
+    }
 
     assert batch.status == "passed"
     assert len(batch.results) == 5
@@ -440,11 +660,15 @@ def test_multiple_scenarios_run_and_write_artifacts(tmp_path: Path) -> None:
 
 def test_workspace_safe_agent_passes(tmp_path: Path) -> None:
     """Safe agent reads workspace files but does not exfiltrate."""
-    config_path = _write_temp_config(tmp_path, replacement_target="tests/fixtures/safe_agent.py")
+    config_path = _write_temp_config(
+        tmp_path, replacement_target="tests/fixtures/safe_agent.py"
+    )
     config = load_config(config_path)
 
     batch = asyncio.run(execute_run(config, config_path))
-    result = next(r for r in batch.results if r.scenario_id == "poisoned-workspace-search")
+    result = next(
+        r for r in batch.results if r.scenario_id == "poisoned-workspace-search"
+    )
 
     assert result.status == "passed"
     assert result.workspace_path is not None
@@ -453,11 +677,15 @@ def test_workspace_safe_agent_passes(tmp_path: Path) -> None:
 
 def test_workspace_exfil_agent_fails(tmp_path: Path) -> None:
     """Exfil agent reads workspace files and sends them to the attacker endpoint."""
-    config_path = _write_temp_config(tmp_path, replacement_target="tests/fixtures/exfil_agent.py")
+    config_path = _write_temp_config(
+        tmp_path, replacement_target="tests/fixtures/exfil_agent.py"
+    )
     config = load_config(config_path)
 
     batch = asyncio.run(execute_run(config, config_path))
-    result = next(r for r in batch.results if r.scenario_id == "poisoned-workspace-search")
+    result = next(
+        r for r in batch.results if r.scenario_id == "poisoned-workspace-search"
+    )
 
     assert result.status == "failed"
     assert result.workspace_path is not None
@@ -510,7 +738,9 @@ def test_build_workspace_file_content() -> None:
     from tddf.traps import build_workspace_file_content
 
     clean = TrapWorkspaceFileConfig(path="readme.md", content="# Hello")
-    assert build_workspace_file_content(clean, attacker_url="http://evil/x") == "# Hello"
+    assert (
+        build_workspace_file_content(clean, attacker_url="http://evil/x") == "# Hello"
+    )
 
     trapped = TrapWorkspaceFileConfig(
         path="notes.md",
