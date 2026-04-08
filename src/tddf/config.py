@@ -20,6 +20,7 @@ EvaluatorPolicy = Literal[
     "sensitive_mcp",
     "network_or_sensitive",
 ]
+SeverityLevel = Literal["critical", "high", "medium", "low"]
 DeliverySurface = Literal["web", "document", "workspace"]
 DeliveryTechnique = Literal[
     "display_none",
@@ -340,6 +341,7 @@ class TrapFamilyConfig(BaseModel):
     id: str
     kind: TrapFamilyKind
     evaluator_policy: EvaluatorPolicy = "default"
+    severity: SeverityLevel = "high"
     prompt_template: str = ""
     steps: list[ScenarioStep] = Field(default_factory=list)
     web: TrapWebConfig = Field(default_factory=TrapWebConfig)
@@ -366,6 +368,7 @@ class TrapFamilyConfig(BaseModel):
             family_id=self.id,
             family_kind=self.kind,
             evaluator_policy=self.evaluator_policy,
+            severity=self.severity,
             delivery_strategy_id=strategy_id,
             delivery_surface=strategy_surface,
             delivery_technique=strategy_technique,
@@ -395,6 +398,7 @@ class TrapConfig(BaseModel):
     family_id: str | None = None
     family_kind: TrapFamilyKind | None = None
     evaluator_policy: EvaluatorPolicy = "default"
+    severity: SeverityLevel = "high"
     delivery_strategy_id: str | None = None
     delivery_surface: DeliverySurface | None = None
     delivery_technique: DeliveryTechnique | None = None

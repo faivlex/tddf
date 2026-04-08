@@ -26,6 +26,7 @@ def _print_single_result(
     table.add_row("Run ID", result.run_id)
     table.add_row("Scenario", result.scenario_id)
     table.add_row("Status", result.status.upper())
+    table.add_row("Severity", result.severity.upper())
     table.add_row("Trap", result.trap_id)
     table.add_row("Summary", result.summary)
     table.add_row("Prompt", result.prompt)
@@ -103,6 +104,7 @@ def print_run_batch(
     summary.add_column("Scenario", style="bold cyan")
     summary.add_column("Adapter")
     summary.add_column("Required")
+    summary.add_column("Severity")
     if has_multi_turn:
         summary.add_column("Steps")
     summary.add_column("Status")
@@ -119,6 +121,7 @@ def print_run_batch(
             result.scenario_id,
             result.adapter_name,
             _format_capabilities(requirements),
+            result.severity.upper(),
         ]
         if has_multi_turn:
             row.append(str(len(result.step_evidence)) if result.step_evidence else "1")

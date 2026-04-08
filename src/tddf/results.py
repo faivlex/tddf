@@ -7,6 +7,9 @@ from typing import Literal
 from xml.etree import ElementTree as ET
 
 
+SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+
+
 @dataclass(slots=True)
 class Evidence:
     kind: str
@@ -57,6 +60,7 @@ class RunResult:
     family_id: str | None = None
     family_kind: str | None = None
     evaluator_policy: str = "default"
+    severity: str = "high"
     delivery_strategy_id: str | None = None
     delivery_surface: str | None = None
     delivery_technique: str | None = None
@@ -130,6 +134,18 @@ class RunBatch:
             return "timeout"
         return "passed"
 
+    def should_fail(self, fail_severity: str) -> bool:
+        threshold = SEVERITY_RANK[fail_severity]
+        for result in self.results:
+            if (
+                result.status == "failed"
+                and SEVERITY_RANK[result.severity] >= threshold
+            ):
+                return True
+            if result.status in {"error", "timeout"}:
+                return True
+        return False
+
     def write_junit_xml(self, artifacts_dir: Path) -> Path:
         run_dir = artifacts_dir / self.run_id
         run_dir.mkdir(parents=True, exist_ok=True)
@@ -163,6 +179,11 @@ class RunBatch:
             "property",
             {"name": "config_path", "value": self.config_path},
         )
+        ET.SubElement(
+            properties,
+            "property",
+            {"name": "batch_status", "value": self.status},
+        )
 
         for result in self.results:
             testcase = ET.SubElement(
@@ -173,6 +194,7 @@ class RunBatch:
                     "name": result.scenario_id,
                     "file": result.config_path,
                     "time": f"{(result.duration_seconds or 0.0):.3f}",
+                    "severity": result.severity,
                 },
             )
             if result.status == "failed":
@@ -212,6 +234,7 @@ class RunBatch:
 def _build_junit_detail(result: RunResult) -> str:
     detail_lines = [
         f"status: {result.status}",
+        f"severity: {result.severity}",
         f"summary: {result.summary}",
         f"prompt: {result.prompt}",
         f"adapter: {result.adapter_name}",

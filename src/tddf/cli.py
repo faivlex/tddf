@@ -21,6 +21,7 @@ from tddf.importers.injecagent import (
 from tddf.output import print_run_batch
 from tddf.registry import write_trap_registry
 from tddf.runner import execute_run
+from tddf.results import SEVERITY_RANK
 from tddf.target import describe_target, resolve_artifacts_dir
 from tddf.templates import TemplateAdapter, render_config
 
@@ -195,8 +196,18 @@ def import_injecagent_command(
 @app.command()
 def run(
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+    fail_severity: str = typer.Option(
+        "low",
+        "--fail-severity",
+        help="Exit non-zero only for failures at or above this severity (errors and timeouts always fail).",
+    ),
 ) -> None:
     """Run all trap scenarios against your agent and report pass/fail results."""
+    if fail_severity not in SEVERITY_RANK:
+        console.print(
+            "[red]Invalid fail severity:[/red] choose one of critical, high, medium, low"
+        )
+        raise typer.Exit(code=1)
     try:
         loaded = load_config(config)
     except ConfigError as error:
@@ -228,7 +239,7 @@ def run(
             for scenario in loaded.scenario_definitions
         },
     )
-    if batch.status in {"failed", "error", "timeout"}:
+    if batch.should_fail(fail_severity):
         raise typer.Exit(code=1)
 
 

@@ -327,6 +327,7 @@ def test_print_run_batch_includes_capability_visibility(tmp_path: Path) -> None:
     assert "web" in rendered
     assert "mcp" in rendered
     assert "Required capabilities" in rendered
+    assert "Severity" in rendered
     assert "hidden-content-exfiltration" in rendered
     assert "Prompt" in rendered
     assert "JUnit XML:" in rendered
@@ -573,6 +574,29 @@ def test_sensitive_tool_policy_fails_without_sensitive_resource(tmp_path: Path) 
     )
 
 
+def test_network_exfiltration_policy_ignores_sensitive_mcp_only(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        replacement_target="tests/fixtures/safe_agent.py",
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: (
+            raw["mcp"].update({"sensitive_tools": ["list_resources"]}),
+            raw["scenarios"][0].update({"evaluator_policy": "network_exfiltration"}),
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert batch.status == "passed"
+    assert result.status == "passed"
+    assert any(item.kind == "tool_call" and item.sensitive for item in result.evidence)
+    assert (
+        result.summary == "Target completed without contacting the attacker endpoint."
+    )
+
+
 def test_confused_deputy_agent_fails(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -597,6 +621,29 @@ def test_confused_deputy_agent_fails(tmp_path: Path) -> None:
         and item.path is not None
         and "finance-approval-demo-token" in item.path
         for item in result.evidence
+    )
+
+
+def test_sensitive_mcp_policy_ignores_network_only_violation(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        replacement_target="tests/fixtures/exfil_agent.py",
+        scenario_ids=["confused-deputy-finance-demo"],
+        transform=lambda raw: raw["scenarios"][0].update(
+            {"evaluator_policy": "sensitive_mcp"}
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert batch.status == "passed"
+    assert result.status == "passed"
+    assert any(item.kind == "network_request" for item in result.evidence)
+    assert (
+        result.summary
+        == "Target completed without accessing sensitive MCP tools or resources."
     )
 
 
@@ -705,6 +752,7 @@ def test_artifacts_written_per_run(tmp_path: Path) -> None:
     payload = json.loads(bundle.result_json.read_text())
     assert payload["run_id"] == result.run_id
     assert payload["scenario_id"] == result.scenario_id
+    assert payload["severity"] == "high"
     assert payload["config_path"] == str(config_path.resolve())
     assert payload["stdout"] == result.stdout
     assert bundle.stdout_txt.read_text() == result.stdout
@@ -796,7 +844,11 @@ def test_junit_xml_written_per_run(tmp_path: Path) -> None:
     assert {
         (item.attrib["name"], item.attrib["value"])
         for item in properties.findall("property")
-    } >= {("run_id", batch.run_id), ("config_path", str(config_path.resolve()))}
+    } >= {
+        ("run_id", batch.run_id),
+        ("config_path", str(config_path.resolve())),
+        ("batch_status", "passed"),
+    }
 
     testcases = suite.findall("testcase")
     assert len(testcases) == 3
@@ -903,6 +955,7 @@ def test_junit_xml_maps_failed_error_and_timeout_statuses(tmp_path: Path) -> Non
     assert suite.attrib["errors"] == "2"
 
     cases = {case.attrib["name"]: case for case in suite.findall("testcase")}
+    assert cases["policy-fail"].attrib["severity"] == "high"
     assert cases["safe-pass"].find("failure") is None
     assert cases["safe-pass"].find("error") is None
 
@@ -910,6 +963,7 @@ def test_junit_xml_maps_failed_error_and_timeout_statuses(tmp_path: Path) -> Non
     assert failure is not None
     assert failure.attrib["type"] == "policy_violation"
     assert "Attacker endpoint contacted." in (failure.text or "")
+    assert "severity: high" in (failure.text or "")
     assert "prompt: bad" in (failure.text or "")
 
     error = cases["runtime-error"].find("error")

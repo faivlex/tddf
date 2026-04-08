@@ -79,6 +79,7 @@ def test_load_default_config_exposes_expected_capabilities() -> None:
         {"deputy"},
         {"web", "mcp"},
     ]
+    assert all(scenario.severity == "high" for scenario in config.scenario_definitions)
 
 
 def test_load_config_rejects_hermes_mcp_injection_without_temp_home(
