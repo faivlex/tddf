@@ -65,6 +65,7 @@ def test_load_default_config_exposes_expected_capabilities() -> None:
         "markdown-masking-demo",
         "poisoned-workspace-search",
         "confused-deputy-finance-demo",
+        "oversight-evasion-security-audit",
         "multi-turn-context-poisoning",
     ]
     assert [
@@ -74,6 +75,7 @@ def test_load_default_config_exposes_expected_capabilities() -> None:
         {"web", "mcp"},
         {"document", "mcp"},
         {"workspace", "mcp"},
+        {"deputy"},
         {"deputy"},
         {"web", "mcp"},
     ]

@@ -126,8 +126,9 @@ trap_classes:
       datasets, but they are still relevant import targets for task 14.
 
   - id: oversight_evasion
-    status: deferred
-    shipped_scenarios: []
+    status: shipped
+    shipped_scenarios:
+      - oversight-evasion-security-audit
     delivery_variants:
       - educational_framing
       - critic_evasion
@@ -137,10 +138,11 @@ trap_classes:
       - oecd-ai-2025-human-overseer-manipulation
     import_candidates:
       - jailbreak-llms-repo
-    authorship: not_started
+    authorship: first_party_adaptation
     notes: >-
-      This class is still backlog work. It should not be imported until provenance and
-      licensing are explicit for the chosen jailbreak datasets.
+      TDDF now ships one visible-framing oversight-evasion scenario on the deputy
+      surface. External jailbreak corpora are still deferred until provenance and
+      licensing are explicit.
 
   - id: multimodal_steganography
     status: deferred

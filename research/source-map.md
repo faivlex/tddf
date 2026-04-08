@@ -23,13 +23,13 @@ This file maps the research sources in `tddf.md` to the shipped trap library and
 | Workspace poisoning | `poisoned-workspace-search` | Zou 2025, Clop and Teglia 2024, Wang 2025a | `uiuc-kang-lab/InjecAgent`, `ethz-spylab/agentdojo` | First-party adaptation |
 | Multi-turn context poisoning | `multi-turn-context-poisoning` | Zou 2025, Chen 2024, Wang 2023, Zhao 2024 | `uiuc-kang-lab/InjecAgent` | First-party adaptation |
 | Confused deputy exfiltration | `confused-deputy-finance-demo` | Shapira 2025, EchoLeak 2025, Alizadeh 2025, Cohen 2024 | `ethz-spylab/agentdojo`, `uiuc-kang-lab/InjecAgent` | First-party adaptation |
+| Oversight evasion | `oversight-evasion-security-audit` | Weinberg 2025, Shen 2024, OECD.AI 2025 | `verazuo/jailbreak_llms` or similar | First-party adaptation |
 | MCP tool abuse | MCP-backed scenarios across web/document/workspace/multi-turn flows | Alizadeh 2025, Shapira 2025 | `modelcontextprotocol/servers`, `ethz-spylab/agentdojo` | First-party harness aligned to cited literature |
 
 ## Deferred Trap Classes
 
 | Trap class | Status | Source family | Why deferred |
 | --- | --- | --- | --- |
-| Oversight evasion | deferred | Weinberg 2025, Shen 2024, OECD.AI 2025, jailbreak corpora | Still backlog product work and requires tighter provenance checks on jailbreak datasets |
 | Multimodal steganography | deferred | Bagdasaryan 2023, Qi 2024 | TDDF does not yet have a multimodal harness |
 | Systemic multi-agent traps | deferred | Gu 2024, Cui and Du 2025 | TDDF does not yet orchestrate multi-agent systems natively |
 
@@ -41,7 +41,7 @@ This file maps the research sources in `tddf.md` to the shipped trap library and
 | 2 | `ethz-spylab/agentdojo` | Best next importer for confused-deputy, finance, inbox, and tool-calling scenarios |
 | 3 | `modelcontextprotocol/servers` | Best backend source for reusable MCP environment profiles, though not a payload dataset itself |
 | 4 | `leondz/garak` | Strong follow-on source for syntactic masking and encoded payload variants |
-| 5 | `verazuo/jailbreak_llms` or similar | Keep deferred until oversight-evasion work starts and provenance is clearer |
+| 5 | `verazuo/jailbreak_llms` or similar | Keep deferred as an expansion source until provenance is clearer for redistributed jailbreak corpora |
 
 ## Provenance And Licensing Rules
 

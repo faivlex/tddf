@@ -28,6 +28,7 @@ def _print_single_result(
     table.add_row("Status", result.status.upper())
     table.add_row("Trap", result.trap_id)
     table.add_row("Summary", result.summary)
+    table.add_row("Prompt", result.prompt)
     table.add_row("Target", " ".join(result.target_command))
     table.add_row("Adapter", result.adapter_name)
     if scenario_requirements is not None:
@@ -77,8 +78,12 @@ def _print_single_result(
         step_lines = []
         for step in result.step_evidence:
             label = step.step_label or f"step-{step.step_index}"
-            step_lines.append(f"[{step.step_index}] {label}: {len(step.evidence)} evidence items")
-            step_lines.extend(f"  - {item.kind}: {item.detail}" for item in step.evidence)
+            step_lines.append(
+                f"[{step.step_index}] {label}: {len(step.evidence)} evidence items"
+            )
+            step_lines.extend(
+                f"  - {item.kind}: {item.detail}" for item in step.evidence
+            )
         table.add_row("Step Evidence", "\n".join(step_lines))
 
     console.print(table)
@@ -117,13 +122,15 @@ def print_run_batch(
         ]
         if has_multi_turn:
             row.append(str(len(result.step_evidence)) if result.step_evidence else "1")
-        row.extend([
-            result.status.upper(),
-            f"{result.duration_seconds:.2f}s"
-            if result.duration_seconds is not None
-            else "-",
-            str(len(result.evidence)),
-        ])
+        row.extend(
+            [
+                result.status.upper(),
+                f"{result.duration_seconds:.2f}s"
+                if result.duration_seconds is not None
+                else "-",
+                str(len(result.evidence)),
+            ]
+        )
         summary.add_row(*row)
 
     console.print(summary)

@@ -207,6 +207,7 @@ def _build_junit_detail(result: RunResult) -> str:
     detail_lines = [
         f"status: {result.status}",
         f"summary: {result.summary}",
+        f"prompt: {result.prompt}",
         f"adapter: {result.adapter_name}",
         f"target: {' '.join(result.target_command)}",
     ]
@@ -219,6 +220,10 @@ def _build_junit_detail(result: RunResult) -> str:
         detail_lines.append("steps:")
         for step in result.step_evidence:
             label = step.step_label or f"step-{step.step_index}"
-            detail_lines.append(f"  [{step.step_index}] {label}: {len(step.evidence)} evidence items")
-            detail_lines.extend(f"    - {item.kind}: {item.detail}" for item in step.evidence)
+            detail_lines.append(
+                f"  [{step.step_index}] {label}: {len(step.evidence)} evidence items"
+            )
+            detail_lines.extend(
+                f"    - {item.kind}: {item.detail}" for item in step.evidence
+            )
     return "\n".join(detail_lines)
