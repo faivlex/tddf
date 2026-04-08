@@ -2,8 +2,8 @@ version: 1
 scope: tddf-mvp-source-map
 maintainer_note: >-
   Planning and provenance map for shipped TDDF trap classes and the first external
-  import queue. This is not the normalized trap registry from task 14; it is the
-  research-to-product map that task 14 should build on.
+  import queue. The InjecAgent importer was the first consumer of this map.
+  Future importers (AgentDojo, garak) should follow the same provenance model.
 
 trap_classes:
   - id: web_standard_obfuscation
@@ -123,7 +123,7 @@ trap_classes:
     notes: >-
       MCP abuse is currently modeled through TDDF's local mock server and sensitive
       resource policy. Official MCP server repos are environment backends, not trap
-      datasets, but they are still relevant import targets for task 14.
+      datasets, but they are still relevant import targets for future importers.
 
   - id: oversight_evasion
     status: shipped
@@ -449,7 +449,7 @@ source_index:
     license_status: review_required
     attribution_required: true
     notes: >-
-      Primary candidate for task 14 because it offers a large indirect prompt injection
+      First shipped importer target. Offers a large indirect prompt injection
       dataset that maps well to TDDF's current web, document, and delayed-trigger trap
       families.
 
@@ -490,13 +490,13 @@ source_index:
     license_status: review_required
     attribution_required: true
     notes: >-
-      Treat as reusable mock tool backends for task 14 rather than as a payload dataset.
+      Treat as reusable mock tool backends rather than as a payload dataset.
 
 import_priority:
   - rank: 1
     source_id: injecagent-repo
     rationale: >-
-      Best first importer for task 14 because it directly expands content injection and
+      Best next importer target because it directly expands content injection and
       behavioural control coverage with many cases that can normalize into current TDDF
       trap families.
 
