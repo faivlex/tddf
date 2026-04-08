@@ -1,0 +1,522 @@
+version: 1
+scope: tddf-mvp-source-map
+maintainer_note: >-
+  Planning and provenance map for shipped TDDF trap classes and the first external
+  import queue. This is not the normalized trap registry from task 14; it is the
+  research-to-product map that task 14 should build on.
+
+trap_classes:
+  - id: web_standard_obfuscation
+    status: shipped
+    shipped_scenarios:
+      - hidden-content-exfiltration
+      - metadata-obfuscation-demo
+    delivery_variants:
+      - html_comment
+      - meta_tag
+    source_ids:
+      - greshake-2023-indirect-prompt-injection
+      - verma-yadav-2025-html-metadata
+      - evtimov-2025-wasp
+      - johnson-2025-accessibility-triggers
+    import_candidates:
+      - injecagent-repo
+    authorship: first_party_adaptation
+    notes: >-
+      Current TDDF pages are original local scenarios informed by the cited web
+      injection literature. No upstream benchmark case ids are imported yet.
+
+  - id: syntactic_masking
+    status: shipped
+    shipped_scenarios:
+      - markdown-masking-demo
+      - poisoned-workspace-search
+    delivery_variants:
+      - markdown_comment
+      - white_on_white
+    source_ids:
+      - keuper-2025-syntactic-masking
+    import_candidates:
+      - garak-repo
+    authorship: first_party_adaptation
+    notes: >-
+      The document and workspace masking scenarios are TDDF-native compositions that
+      mirror the same hidden-text family documented in the cited paper.
+
+  - id: workspace_poisoning
+    status: shipped
+    shipped_scenarios:
+      - poisoned-workspace-search
+    delivery_variants:
+      - markdown_comment
+    source_ids:
+      - zou-2025-rag-poisoning
+      - clop-teglia-2024-backdoored-retrievers
+      - wang-2025-memory-extraction
+    import_candidates:
+      - injecagent-repo
+      - agentdojo-repo
+    authorship: first_party_adaptation
+    notes: >-
+      TDDF currently models poisoned local files and hidden instructions directly,
+      without yet ingesting a benchmark dataset for workspace or memory-style traps.
+
+  - id: multi_turn_context_poisoning
+    status: shipped
+    shipped_scenarios:
+      - multi-turn-context-poisoning
+    delivery_variants:
+      - multi_step_prompt_sequence
+      - html_comment
+    source_ids:
+      - zou-2025-rag-poisoning
+      - chen-2024-latent-memory-poisoning
+      - wang-2023-contextual-learning
+      - zhao-2024-contextual-learning
+    import_candidates:
+      - injecagent-repo
+    authorship: first_party_adaptation
+    notes: >-
+      The shipped multi-turn scenario is a first-party TDDF composition meant to
+      exercise memory and delayed-trigger behavior. It is not imported from an
+      upstream multi-turn benchmark yet.
+
+  - id: confused_deputy_exfiltration
+    status: shipped
+    shipped_scenarios:
+      - confused-deputy-finance-demo
+    delivery_variants:
+      - delegated_request
+      - attacker_listener
+    source_ids:
+      - shapira-2025-confused-deputy
+      - reddy-gujral-2025-echoleak
+      - alizadeh-2025-agentdojo-banking
+      - cohen-2024-self-replicating-prompts
+    import_candidates:
+      - agentdojo-repo
+      - injecagent-repo
+    authorship: first_party_adaptation
+    notes: >-
+      The finance flow is TDDF-authored, but it is explicitly anchored in the
+      confused-deputy and zero-click exfiltration literature plus the AgentDojo
+      benchmark family.
+
+  - id: mcp_tool_abuse
+    status: shipped
+    shipped_scenarios:
+      - hidden-content-exfiltration
+      - metadata-obfuscation-demo
+      - markdown-masking-demo
+      - poisoned-workspace-search
+      - multi-turn-context-poisoning
+    delivery_variants:
+      - list_resources
+      - read_resource
+    source_ids:
+      - alizadeh-2025-agentdojo-banking
+      - shapira-2025-confused-deputy
+    import_candidates:
+      - modelcontextprotocol-servers-repo
+      - agentdojo-repo
+    authorship: first_party_harness_with_source_alignment
+    notes: >-
+      MCP abuse is currently modeled through TDDF's local mock server and sensitive
+      resource policy. Official MCP server repos are environment backends, not trap
+      datasets, but they are still relevant import targets for task 14.
+
+  - id: oversight_evasion
+    status: deferred
+    shipped_scenarios: []
+    delivery_variants:
+      - educational_framing
+      - critic_evasion
+    source_ids:
+      - weinberg-2025-critic-evasion
+      - shen-2024-jailbreak-survey
+      - oecd-ai-2025-human-overseer-manipulation
+    import_candidates:
+      - jailbreak-llms-repo
+    authorship: not_started
+    notes: >-
+      This class is still backlog work. It should not be imported until provenance and
+      licensing are explicit for the chosen jailbreak datasets.
+
+  - id: multimodal_steganography
+    status: deferred
+    shipped_scenarios: []
+    delivery_variants:
+      - image_payload
+      - audio_payload
+    source_ids:
+      - bagdasaryan-2023-steganography
+      - qi-2024-vision-jailbreak
+    import_candidates: []
+    authorship: not_started
+    notes: >-
+      Deferred until TDDF has a stable multimodal harness and a redistribution-safe
+      source set.
+
+  - id: systemic_multi_agent
+    status: deferred
+    shipped_scenarios: []
+    delivery_variants:
+      - infectious_jailbreak
+      - sybil_consensus
+    source_ids:
+      - gu-2024-infectious-jailbreak
+      - cui-du-2025-sybil-attacks
+    import_candidates: []
+    authorship: not_started
+    notes: >-
+      Deferred until TDDF has native multi-agent orchestration instead of single-agent
+      local harnesses.
+
+source_index:
+  - id: greshake-2023-indirect-prompt-injection
+    kind: paper
+    status: launch_reference
+    family:
+      - content_injection
+    reference: Greshake et al., 2023
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Foundational indirect prompt injection source for hidden web content.
+
+  - id: verma-yadav-2025-html-metadata
+    kind: paper
+    status: launch_reference
+    family:
+      - content_injection
+    reference: Verma and Yadav, 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports metadata and aria-label style web payloads.
+
+  - id: evtimov-2025-wasp
+    kind: paper
+    status: launch_reference
+    family:
+      - content_injection
+    reference: Evtimov et al., 2025 (WASP Benchmark)
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Benchmark evidence for hidden prompt injections in web content.
+
+  - id: johnson-2025-accessibility-triggers
+    kind: paper
+    status: launch_reference
+    family:
+      - content_injection
+    reference: Johnson et al., 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Relevant to accessibility-tree and hidden-attribute agent parsing.
+
+  - id: keuper-2025-syntactic-masking
+    kind: paper
+    status: launch_reference
+    family:
+      - syntactic_masking
+    reference: Keuper, 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Basis for hidden Markdown and white-on-white document payloads.
+
+  - id: zou-2025-rag-poisoning
+    kind: paper
+    status: launch_reference
+    family:
+      - memory_poisoning
+      - contextual_learning
+    reference: Zou et al., 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports poisoned context and delayed-trigger knowledge corruption.
+
+  - id: clop-teglia-2024-backdoored-retrievers
+    kind: paper
+    status: launch_reference
+    family:
+      - memory_poisoning
+    reference: Clop and Teglia, 2024
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports retrieved malicious documents and poisoned local context.
+
+  - id: chen-2024-latent-memory-poisoning
+    kind: paper
+    status: launch_reference
+    family:
+      - memory_poisoning
+    reference: Chen et al., 2024
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports delayed triggers tied to stored context and episodic recall.
+
+  - id: wang-2025-memory-extraction
+    kind: paper
+    status: launch_reference
+    family:
+      - memory_poisoning
+      - data_exfiltration
+    reference: Wang et al., 2025a
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports hidden prompts that coerce retrieval and leakage of sensitive past state.
+
+  - id: wang-2023-contextual-learning
+    kind: paper
+    status: launch_reference
+    family:
+      - contextual_learning
+    reference: Wang et al., 2023
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports few-shot or staged prompt poisoning over multiple turns.
+
+  - id: zhao-2024-contextual-learning
+    kind: paper
+    status: launch_reference
+    family:
+      - contextual_learning
+    reference: Zhao et al., 2024
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports adversarial demonstrations that steer later steps.
+
+  - id: shapira-2025-confused-deputy
+    kind: paper
+    status: launch_reference
+    family:
+      - behavioural_control
+      - data_exfiltration
+    reference: Shapira et al., 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Primary basis for confused-deputy and local-file exfiltration traps.
+
+  - id: reddy-gujral-2025-echoleak
+    kind: incident
+    status: launch_reference
+    family:
+      - behavioural_control
+      - data_exfiltration
+    reference: Reddy and Gujral, 2025 (EchoLeak)
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Real-world zero-click exfiltration case study for delegated workflows.
+
+  - id: alizadeh-2025-agentdojo-banking
+    kind: paper
+    status: launch_reference
+    family:
+      - behavioural_control
+      - tool_abuse
+    reference: Alizadeh et al., 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: AgentDojo banking scenarios motivate tool-calling and finance exfiltration traps.
+
+  - id: cohen-2024-self-replicating-prompts
+    kind: paper
+    status: launch_reference
+    family:
+      - behavioural_control
+      - data_exfiltration
+    reference: Cohen et al., 2024
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports chained zero-click exfiltration behaviors.
+
+  - id: weinberg-2025-critic-evasion
+    kind: paper
+    status: deferred_reference
+    family:
+      - oversight_evasion
+    reference: Weinberg, 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Backlog source for educational framing and critic evasion traps.
+
+  - id: shen-2024-jailbreak-survey
+    kind: paper
+    status: deferred_reference
+    family:
+      - oversight_evasion
+    reference: Shen et al., 2024
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Backlog source for critic and oversight evasion prompt families.
+
+  - id: oecd-ai-2025-human-overseer-manipulation
+    kind: incident
+    status: deferred_reference
+    family:
+      - human_in_the_loop
+    reference: OECD.AI Policy Observatory, 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports future human-overseer manipulation scenarios.
+
+  - id: bagdasaryan-2023-steganography
+    kind: paper
+    status: deferred_reference
+    family:
+      - multimodal
+    reference: Bagdasaryan et al., 2023
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Multimodal steganographic payload reference for deferred trap families.
+
+  - id: qi-2024-vision-jailbreak
+    kind: paper
+    status: deferred_reference
+    family:
+      - multimodal
+    reference: Qi et al., 2024
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Supports future image-based jailbreak or hidden multimodal payload work.
+
+  - id: gu-2024-infectious-jailbreak
+    kind: paper
+    status: deferred_reference
+    family:
+      - systemic_multi_agent
+    reference: Gu et al., 2024
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Multi-agent infectious jailbreak source for later orchestration work.
+
+  - id: cui-du-2025-sybil-attacks
+    kind: paper
+    status: deferred_reference
+    family:
+      - systemic_multi_agent
+    reference: Cui and Du, 2025
+    usage: citation_only
+    license_status: citation_only
+    attribution_required: true
+    notes: Multi-agent Sybil attack source for later consensus manipulation traps.
+
+  - id: agentdojo-repo
+    kind: repository
+    status: candidate_import
+    family:
+      - behavioural_control
+      - tool_abuse
+    reference: ethz-spylab/agentdojo
+    usage: import_candidate
+    license_status: review_required
+    attribution_required: true
+    notes: >-
+      Highest-value importer candidate for confused-deputy, finance, inbox, and
+      tool-calling scenarios. Verify license, pin commits, and preserve case ids before
+      normalization.
+
+  - id: injecagent-repo
+    kind: repository
+    status: candidate_import
+    family:
+      - content_injection
+      - behavioural_control
+    reference: git-disl/InjecAgent
+    usage: import_candidate
+    license_status: review_required
+    attribution_required: true
+    notes: >-
+      Primary candidate for task 14 because it offers a large indirect prompt injection
+      dataset that maps well to TDDF's current web, document, and delayed-trigger trap
+      families.
+
+  - id: garak-repo
+    kind: repository
+    status: candidate_import
+    family:
+      - syntactic_masking
+      - encoding
+    reference: leondz/garak
+    usage: adapt_probes
+    license_status: review_required
+    attribution_required: true
+    notes: >-
+      Good source of probe ideas and payload families. Prefer adaptation with clear
+      attribution over wholesale copying of probe text.
+
+  - id: jailbreak-llms-repo
+    kind: repository
+    status: defer_pending_provenance
+    family:
+      - oversight_evasion
+    reference: verazuo/jailbreak_llms or similar dataset collections
+    usage: possible_future_import
+    license_status: mixed_provenance_review_required
+    attribution_required: true
+    notes: >-
+      Do not import until dataset provenance and redistribution rights are explicit;
+      many jailbreak corpora aggregate prompts from mixed sources.
+
+  - id: modelcontextprotocol-servers-repo
+    kind: repository
+    status: candidate_backend
+    family:
+      - tool_abuse
+    reference: modelcontextprotocol/servers
+    usage: environment_backend
+    license_status: review_required
+    attribution_required: true
+    notes: >-
+      Treat as reusable mock tool backends for task 14 rather than as a payload dataset.
+
+import_priority:
+  - rank: 1
+    source_id: injecagent-repo
+    rationale: >-
+      Best first importer for task 14 because it directly expands content injection and
+      behavioural control coverage with many cases that can normalize into current TDDF
+      trap families.
+
+  - rank: 2
+    source_id: agentdojo-repo
+    rationale: >-
+      Best second importer for confused-deputy, finance, inbox, and tool-calling flows.
+
+  - rank: 3
+    source_id: modelcontextprotocol-servers-repo
+    rationale: >-
+      Important backend source for reusable environment profiles, but not a payload
+      library in itself.
+
+  - rank: 4
+    source_id: garak-repo
+    rationale: >-
+      Useful for expanding syntactic masking and encoded payload families after the first
+      two benchmark importers land.
+
+  - rank: 5
+    source_id: jailbreak-llms-repo
+    rationale: >-
+      Keep deferred until TDDF starts oversight-evasion work and provenance/licensing are
+      clear enough for redistribution.
