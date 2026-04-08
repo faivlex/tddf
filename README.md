@@ -23,6 +23,12 @@ tddf run
 
 That's it. The default template includes a safe sample agent and a web injection trap so you can see results immediately.
 
+Or skip the config entirely — `assess` discovers what your agent can do and generates scenarios automatically:
+
+```bash
+tddf assess --config tddf.yaml
+```
+
 ## How It Works
 
 1. **TDDF spins up local mock servers** — web pages with hidden traps, attacker capture endpoints, mock MCP tools, and poisoned file workspaces.
@@ -124,9 +130,10 @@ uv run tddf --help
 | Command | What it does |
 |---------|-------------|
 | `tddf init` | Write a starter config for a given adapter |
-| `tddf import injecagent` | Import attack payloads from the InjecAgent benchmark |
 | `tddf validate` | Check config shape, capability compatibility, and show resolved targets |
 | `tddf run` | Execute all scenarios and write artifacts |
+| `tddf assess` | Discover agent capabilities, generate targeted scenarios, and run them |
+| `tddf import injecagent` | Import attack payloads from the InjecAgent benchmark |
 | `tddf version` | Print the installed version |
 
 ## External Payload Imports

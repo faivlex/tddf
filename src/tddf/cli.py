@@ -9,6 +9,11 @@ import yaml
 from rich.console import Console
 
 from tddf import __version__
+from tddf.assess import (
+    discover_capabilities,
+    generate_assessment_config,
+    generated_scenario_summary,
+)
 from tddf.config_loader import DEFAULT_CONFIG_PATH, ConfigError, load_config
 from tddf.importers.injecagent import (
     DEFAULT_INJECAGENT_LICENSE,
@@ -62,9 +67,9 @@ app = typer.Typer(
     epilog=(
         "Examples:\n"
         "  tddf init --adapter command\n"
-        "  tddf import injecagent --revision <sha> --output registry.yaml\n"
         "  tddf validate --config tddf.yaml\n"
-        "  tddf run --config tddf.yaml\n\n"
+        "  tddf run --config tddf.yaml\n"
+        "  tddf assess --config tddf.yaml\n\n"
         "Docs: https://github.com/your-org/tddf"
     ),
     no_args_is_help=True,
@@ -237,6 +242,88 @@ def run(
         scenario_requirements={
             scenario.id: scenario.required_capabilities
             for scenario in loaded.scenario_definitions
+        },
+    )
+    if batch.should_fail(fail_severity):
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def assess(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+    fail_severity: str = typer.Option(
+        "low",
+        "--fail-severity",
+        help="Exit non-zero only for failures at or above this severity (errors and timeouts always fail).",
+    ),
+    write_generated_config: Path | None = typer.Option(
+        None,
+        "--write-generated-config",
+        help="Optional path to write the generated assessment config for reproducibility.",
+    ),
+) -> None:
+    """Point TDDF at your agent and let it figure out what to test — no manual scenario authoring needed."""
+    if fail_severity not in SEVERITY_RANK:
+        console.print(
+            "[red]Invalid fail severity:[/red] choose one of critical, high, medium, low"
+        )
+        raise typer.Exit(code=1)
+    try:
+        loaded = load_config(config)
+    except ConfigError as error:
+        console.print(f"[red]Invalid configuration:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    resolved_config_path = config.resolve()
+    discovery = asyncio.run(discover_capabilities(loaded, resolved_config_path))
+    assessed = generate_assessment_config(loaded, discovery)
+
+    if write_generated_config is not None:
+        resolved_generated_path = write_generated_config.resolve()
+        resolved_generated_path.parent.mkdir(parents=True, exist_ok=True)
+        resolved_generated_path.write_text(
+            yaml.safe_dump(
+                _normalize_for_output(assessed.model_dump(mode="python")),
+                sort_keys=False,
+                allow_unicode=True,
+            )
+        )
+        console.print(
+            f"[green]Wrote generated assessment config:[/green] {resolved_generated_path}"
+        )
+
+    console.print(f"[green]Discovery source:[/green] {discovery.source}")
+    console.print(
+        f"[green]Discovered capabilities:[/green] {_format_capabilities(assessed.target_capabilities & set(discovery.capabilities))}"
+    )
+    console.print(
+        f"[green]Generated scenarios:[/green] {len(assessed.scenario_definitions)}"
+    )
+    for scenario_id in generated_scenario_summary(assessed):
+        console.print(f"- {scenario_id}")
+
+    batch = asyncio.run(execute_run(assessed, resolved_config_path))
+    artifacts_dir = resolve_artifacts_dir(assessed, resolved_config_path)
+    artifacts = (
+        {
+            result.scenario_id: result.write_artifacts(artifacts_dir)
+            for result in batch.results
+        }
+        if assessed.output.write_json
+        else None
+    )
+    junit_xml = (
+        batch.write_junit_xml(artifacts_dir) if assessed.output.write_junit else None
+    )
+    print_run_batch(
+        batch,
+        artifacts=artifacts,
+        junit_xml=junit_xml,
+        target_capabilities=assessed.target_capabilities,
+        harness_capabilities=assessed.harness_capabilities,
+        scenario_requirements={
+            scenario.id: scenario.required_capabilities
+            for scenario in assessed.scenario_definitions
         },
     )
     if batch.should_fail(fail_severity):
