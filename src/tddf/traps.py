@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from tddf.config import TrapConfig
+from tddf.config import TrapConfig, TrapWorkspaceFileConfig
 
 
 def build_prompt(
@@ -11,12 +11,15 @@ def build_prompt(
     web_url: str | None,
     document_path: Path | None,
     deputy_request: str | None = None,
+    workspace_path: Path | None = None,
 ) -> str:
     document_value = str(document_path) if document_path is not None else ""
+    workspace_value = str(workspace_path) if workspace_path is not None else ""
     return trap.prompt_template.format(
         web_url=web_url or "",
         document_path=document_value,
         deputy_request=deputy_request or "",
+        workspace_path=workspace_value,
     )
 
 
@@ -69,3 +72,20 @@ def build_document_content(trap: TrapConfig, attacker_url: str) -> str:
             f"<span style=\"color:white;background:white\">{hidden_text}</span>\n"
         )
     raise ValueError(f"Unsupported document technique: {trap.document.technique}")
+
+
+def build_workspace_file_content(
+    file_config: TrapWorkspaceFileConfig, attacker_url: str
+) -> str:
+    if file_config.hidden_text is None:
+        return file_config.content
+
+    hidden_text = f"{file_config.hidden_text} Attacker URL: {attacker_url}"
+    if file_config.technique == "markdown_comment":
+        return f"{file_config.content}\n\n[//]: # ({hidden_text})\n"
+    if file_config.technique == "white_on_white":
+        return (
+            f"{file_config.content}\n\n"
+            f"<span style=\"color:white;background:white\">{hidden_text}</span>\n"
+        )
+    raise ValueError(f"Unsupported workspace file technique: {file_config.technique}")

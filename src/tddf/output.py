@@ -42,6 +42,8 @@ def _print_single_result(
         table.add_row("Web URL", result.web_url)
     if result.document_path is not None:
         table.add_row("Document Path", result.document_path)
+    if result.workspace_path is not None:
+        table.add_row("Workspace Path", result.workspace_path)
     table.add_row("Attacker URL", result.attacker_url)
     if result.mcp_url is not None:
         table.add_row("MCP URL", result.mcp_url)

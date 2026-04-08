@@ -6,7 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-AdapterCapability = Literal["web", "document", "deputy", "mcp"]
+AdapterCapability = Literal["web", "document", "deputy", "workspace", "mcp"]
 
 
 class CommandTargetConfig(BaseModel):
@@ -25,6 +25,7 @@ class HermesOptionsConfig(BaseModel):
     toolsets: list[str] = Field(default_factory=list)
     model: str | None = None
     provider: str | None = None
+    skills: list[str] = Field(default_factory=list)
     extra_args: list[str] = Field(default_factory=list)
     use_temp_home: bool = True
     base_home_dir: Path | None = None
@@ -58,14 +59,17 @@ def _capabilities_from_hermes_toolsets(toolsets: set[str]) -> set[AdapterCapabil
         capabilities.add("web")
     if "file" in toolsets:
         capabilities.add("document")
+        capabilities.add("workspace")
     if "terminal" in toolsets:
         capabilities.add("deputy")
+        if "workspace" not in capabilities:
+            capabilities.add("workspace")
     return capabilities
 
 
 def get_target_capabilities(target: TargetConfig) -> set[AdapterCapability]:
     if isinstance(target, CommandTargetConfig):
-        return {"web", "document", "deputy", "mcp"}
+        return {"web", "document", "deputy", "workspace", "mcp"}
 
     capabilities = _capabilities_from_hermes_toolsets(set(target.hermes.toolsets))
     if target.hermes.inject_mcp_config:
@@ -118,6 +122,56 @@ class TrapDeputyConfig(BaseModel):
     secret_env_value: str = "finance-approval-demo-token"
 
 
+class TrapWorkspaceFileConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str
+    content: str
+    hidden_text: str | None = None
+    technique: Literal["markdown_comment", "white_on_white"] | None = None
+
+    @model_validator(mode="after")
+    def validate_trap_fields(self) -> "TrapWorkspaceFileConfig":
+        from pathlib import PurePosixPath
+
+        normalized = PurePosixPath(self.path)
+        if normalized.is_absolute():
+            raise ValueError(
+                f"Workspace file path must be relative: '{self.path}'"
+            )
+        if ".." in normalized.parts:
+            raise ValueError(
+                f"Workspace file path must not contain '..': '{self.path}'"
+            )
+        if self.hidden_text is not None and self.technique is None:
+            raise ValueError(
+                f"Workspace file '{self.path}' has hidden_text but no technique."
+            )
+        if self.technique is not None and self.hidden_text is None:
+            raise ValueError(
+                f"Workspace file '{self.path}' has technique but no hidden_text."
+            )
+        return self
+
+
+class TrapWorkspaceConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    enabled: bool = False
+    files: list[TrapWorkspaceFileConfig] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_files(self) -> "TrapWorkspaceConfig":
+        from pathlib import PurePosixPath
+
+        if self.enabled and not self.files:
+            raise ValueError("Workspace trap is enabled but has no files.")
+        normalized = [str(PurePosixPath(f.path)) for f in self.files]
+        if len(normalized) != len(set(normalized)):
+            raise ValueError("Workspace file paths must be unique.")
+        return self
+
+
 class TrapConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -128,6 +182,7 @@ class TrapConfig(BaseModel):
     web: TrapWebConfig = Field(default_factory=TrapWebConfig)
     document: TrapDocumentConfig = Field(default_factory=TrapDocumentConfig)
     deputy: TrapDeputyConfig = Field(default_factory=TrapDeputyConfig)
+    workspace: TrapWorkspaceConfig = Field(default_factory=TrapWorkspaceConfig)
     exfiltration: TrapExfiltrationConfig = Field(default_factory=TrapExfiltrationConfig)
     requires_mcp: bool = False
 
@@ -140,6 +195,8 @@ class TrapConfig(BaseModel):
             capabilities.add("document")
         if self.deputy.enabled:
             capabilities.add("deputy")
+        if self.workspace.enabled:
+            capabilities.add("workspace")
         if self.requires_mcp:
             capabilities.add("mcp")
         return capabilities

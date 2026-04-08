@@ -17,7 +17,7 @@ from tddf.servers import (
     start_mcp_server,
 )
 from tddf.target import build_target_invocation, collect_adapter_observability
-from tddf.traps import build_document_content, build_html_page, build_prompt
+from tddf.traps import build_document_content, build_html_page, build_prompt, build_workspace_file_content
 
 
 async def _execute_scenario(
@@ -64,8 +64,20 @@ async def _execute_scenario(
         deputy_secret_env_key = trap.deputy.secret_env_key
         deputy_secret_env_value = trap.deputy.secret_env_value
 
+    workspace_tempdir: TemporaryDirectory[str] | None = None
+    workspace_path: Path | None = None
+    if trap.workspace.enabled:
+        workspace_tempdir = TemporaryDirectory(prefix="tddf-workspace-")
+        workspace_path = Path(workspace_tempdir.name)
+        for file_config in trap.workspace.files:
+            file_path = workspace_path / file_config.path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(
+                build_workspace_file_content(file_config, attacker_url=attacker_url)
+            )
+
     mcp_url = f"{mcp_server.base_url}{config.mcp.endpoint_path}" if mcp_server is not None else None
-    prompt = build_prompt(trap, web_url=web_url, document_path=document_path, deputy_request=deputy_request)
+    prompt = build_prompt(trap, web_url=web_url, document_path=document_path, deputy_request=deputy_request, workspace_path=workspace_path)
     target_invocation = build_target_invocation(
         config,
         config_path,
@@ -77,6 +89,7 @@ async def _execute_scenario(
         deputy_workspace_dir,
         deputy_secret_env_key,
         deputy_secret_env_value,
+        workspace_path,
     )
     started_at = time.perf_counter()
     started_at_utc = datetime.now(UTC)
@@ -130,6 +143,7 @@ async def _execute_scenario(
                 completed_at=completed_at.isoformat(),
                 web_url=web_url,
                 document_path=str(document_path) if document_path is not None else None,
+                workspace_path=str(workspace_path) if workspace_path is not None else None,
                 attacker_url=attacker_url,
                 adapter_name=adapter_observability.adapter_name,
                 adapter_metadata=adapter_observability.adapter_metadata,
@@ -176,6 +190,7 @@ async def _execute_scenario(
                 completed_at=completed_at.isoformat(),
                 web_url=web_url,
                 document_path=str(document_path) if document_path is not None else None,
+                workspace_path=str(workspace_path) if workspace_path is not None else None,
                 attacker_url=attacker_url,
                 adapter_name=adapter_observability.adapter_name,
                 adapter_metadata=adapter_observability.adapter_metadata,
@@ -197,6 +212,8 @@ async def _execute_scenario(
             document_tempdir.cleanup()
         if deputy_tempdir is not None:
             deputy_tempdir.cleanup()
+        if workspace_tempdir is not None:
+            workspace_tempdir.cleanup()
         if mcp_server is not None:
             mcp_server.stop()
         attacker_server.stop()

@@ -36,18 +36,20 @@ def test_load_default_config_exposes_expected_capabilities() -> None:
     config = load_config(Path("tddf.yaml"))
 
     assert config.target.kind == "command"
-    assert config.target_capabilities == {"web", "document", "deputy", "mcp"}
+    assert config.target_capabilities == {"web", "document", "deputy", "workspace", "mcp"}
     assert config.harness_capabilities == {"mcp"}
     assert [scenario.id for scenario in config.scenario_definitions] == [
         "hidden-content-exfiltration",
         "metadata-obfuscation-demo",
         "markdown-masking-demo",
+        "poisoned-workspace-search",
         "confused-deputy-finance-demo",
     ]
     assert [scenario.required_capabilities for scenario in config.scenario_definitions] == [
         {"web", "mcp"},
         {"web", "mcp"},
         {"document", "mcp"},
+        {"workspace", "mcp"},
         {"deputy"},
     ]
 
@@ -78,7 +80,7 @@ def test_load_config_accepts_mcp_capable_hermes_target(tmp_path: Path) -> None:
     config = load_config(config_path)
 
     assert config.target.kind == "hermes"
-    assert config.target_capabilities == {"web", "document", "deputy", "mcp"}
+    assert config.target_capabilities == {"web", "document", "deputy", "workspace", "mcp"}
 
 
 def test_mcp_required_scenario_rejects_disabled_harness(tmp_path: Path) -> None:

@@ -39,6 +39,7 @@ class RunResult:
     completed_at: str
     web_url: str | None
     document_path: str | None
+    workspace_path: str | None
     attacker_url: str
     adapter_name: str = "command"
     adapter_metadata: dict[str, object] = field(default_factory=dict)

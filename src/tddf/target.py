@@ -50,6 +50,8 @@ def _build_hermes_command(target: HermesTargetConfig, prompt: str) -> list[str]:
     command = [*target.hermes.command_prefix, "chat", "-q", prompt]
     if target.hermes.toolsets:
         command.extend(["--toolsets", ",".join(target.hermes.toolsets)])
+    if target.hermes.skills:
+        command.extend(["--skills", ",".join(target.hermes.skills)])
     if target.hermes.model:
         command.extend(["--model", target.hermes.model])
     if target.hermes.provider:
@@ -100,6 +102,7 @@ def _maybe_prepare_hermes_home(
     metadata = {
         "command_prefix": list(config.target.hermes.command_prefix),
         "toolsets": list(config.target.hermes.toolsets),
+        "skills": list(config.target.hermes.skills),
         "model": config.target.hermes.model,
         "provider": config.target.hermes.provider,
         "extra_args": list(config.target.hermes.extra_args),
@@ -124,6 +127,7 @@ def build_target_invocation(
     deputy_workspace_dir: Path | None,
     deputy_secret_env_key: str | None,
     deputy_secret_env_value: str | None,
+    workspace_path: Path | None = None,
 ) -> TargetInvocation:
     env = os.environ.copy()
     env.update(
@@ -137,6 +141,7 @@ def build_target_invocation(
             deputy_workspace_dir,
             deputy_secret_env_key,
             deputy_secret_env_value,
+            workspace_path,
         )
     )
     cwd = resolve_target_cwd(config, config_path)
@@ -226,6 +231,7 @@ def build_target_environment(
     deputy_workspace_dir: Path | None,
     deputy_secret_env_key: str | None,
     deputy_secret_env_value: str | None,
+    workspace_path: Path | None = None,
 ) -> dict[str, str]:
     env = {
         "TDDF_PROMPT": prompt,
@@ -242,6 +248,8 @@ def build_target_environment(
     if deputy_secret_env_key is not None and deputy_secret_env_value is not None:
         env["TDDF_DEPUTY_SECRET_ENV_KEY"] = deputy_secret_env_key
         env[deputy_secret_env_key] = deputy_secret_env_value
+    if workspace_path is not None:
+        env["TDDF_WORKSPACE_PATH"] = str(workspace_path)
     env.update(config.target.env)
     return env
 
