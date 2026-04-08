@@ -54,6 +54,12 @@ class RunResult:
     document_path: str | None
     workspace_path: str | None
     attacker_url: str
+    family_id: str | None = None
+    family_kind: str | None = None
+    evaluator_policy: str = "default"
+    delivery_strategy_id: str | None = None
+    delivery_surface: str | None = None
+    delivery_technique: str | None = None
     adapter_name: str = "command"
     adapter_metadata: dict[str, object] = field(default_factory=dict)
     mcp_url: str | None = None
