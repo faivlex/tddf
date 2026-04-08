@@ -70,7 +70,7 @@ app = typer.Typer(
         "  tddf validate --config tddf.yaml\n"
         "  tddf run --config tddf.yaml\n"
         "  tddf assess --config tddf.yaml\n\n"
-        "Docs: https://github.com/your-org/tddf"
+        "Docs: https://github.com/gonzalosr/tddf"
     ),
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,

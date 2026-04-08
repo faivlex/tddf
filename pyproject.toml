@@ -1,16 +1,23 @@
 [project]
 name = "tddf"
-version = "0.1.0"
+version = "2026.4.1"
 description = "Test whether your AI agent can be tricked into leaking data"
 readme = "README.md"
+license = "MIT"
 requires-python = ">=3.12"
 keywords = ["agents", "security", "mcp", "prompt-injection", "red-teaming"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
   "Environment :: Console",
+  "License :: OSI Approved :: MIT License",
   "Typing :: Typed",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gonzalosr/tddf"
+Repository = "https://github.com/gonzalosr/tddf"
+Issues = "https://github.com/gonzalosr/tddf/issues"
 dependencies = [
   "pydantic>=2.11.0,<3.0.0",
   "pyyaml>=6.0.2,<7.0.0",

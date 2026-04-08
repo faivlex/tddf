@@ -22,7 +22,7 @@ jobs:
       - name: Install project dependencies
         run: uv sync
 
-      - uses: owner/tddf@v1
+      - uses: gonzalosr/tddf@v1
         with:
           config: tddf.yaml
           fail-severity: high
@@ -31,7 +31,7 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 ```
 
-Replace `owner/tddf@v1` with the tagged TDDF release you want to pin.
+Pin to a specific release tag for reproducibility.
 
 ## What It Does
 

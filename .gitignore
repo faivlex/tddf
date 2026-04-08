@@ -2,3 +2,9 @@ __pycache__/
 *.py[cod]
 .DS_Store
 .tddf/
+.claude/
+.ruff_cache/
+
+# Internal planning — kept locally, not published
+tasks/
+tddf.md
