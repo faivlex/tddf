@@ -13,6 +13,15 @@ LangGraphInputMode = Literal["messages", "prompt"]
 LangGraphStreamMode = Literal["values", "updates", "messages", "custom"]
 OpenAIAgentsInputMode = Literal["messages", "prompt"]
 OpenAIAgentsSessionBackend = Literal["sqlite"]
+ClaudeAgentSDKInputMode = Literal["prompt", "messages"]
+ClaudeAgentSDKPermissionMode = Literal[
+    "default",
+    "acceptEdits",
+    "plan",
+    "bypassPermissions",
+    "dontAsk",
+    "auto",
+]
 TrapFamilyKind = Literal[
     "content_injection",
     "behavioural_control",
@@ -250,12 +259,53 @@ class OpenAIAgentsTargetConfig(BaseModel):
     openai_agents: OpenAIAgentsOptionsConfig
 
 
+class ClaudeAgentSDKOptionsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    capabilities: list[AdapterCapability] = Field(
+        default_factory=lambda: ["web", "document", "deputy", "workspace", "mcp"]
+    )
+    input_mode: ClaudeAgentSDKInputMode = "prompt"
+    input_template: object | None = None
+    allowed_tools: list[str] = Field(default_factory=list)
+    disallowed_tools: list[str] = Field(default_factory=list)
+    permission_mode: ClaudeAgentSDKPermissionMode | None = None
+    system_prompt: str | None = None
+    model: str | None = None
+    max_turns: int | None = Field(default=None, ge=1, le=100)
+    include_partial_messages: bool = False
+    use_session: bool = True
+    use_temp_home: bool = True
+    base_home_dir: Path | None = None
+    inject_mcp_config: bool = False
+    cli_path: Path | None = None
+    setting_sources: list[Literal["user", "project", "local"]] | None = None
+    extra_args: dict[str, str | None] = Field(default_factory=dict)
+    transport: str | None = None
+
+    @model_validator(mode="after")
+    def validate_options(self) -> "ClaudeAgentSDKOptionsConfig":
+        if len(self.capabilities) != len(set(self.capabilities)):
+            raise ValueError("Claude Agent SDK capabilities must be unique.")
+        return self
+
+
+class ClaudeAgentSDKTargetConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["claude_agent_sdk"] = "claude_agent_sdk"
+    cwd: Path | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    claude_agent_sdk: ClaudeAgentSDKOptionsConfig
+
+
 TargetConfig = Annotated[
     CommandTargetConfig
     | HermesTargetConfig
     | OpenClawTargetConfig
     | LangGraphTargetConfig
-    | OpenAIAgentsTargetConfig,
+    | OpenAIAgentsTargetConfig
+    | ClaudeAgentSDKTargetConfig,
     Field(discriminator="kind"),
 ]
 
@@ -280,6 +330,12 @@ def get_target_capabilities(target: TargetConfig) -> set[AdapterCapability]:
 
     if isinstance(target, OpenAIAgentsTargetConfig):
         return set(target.openai_agents.capabilities)
+
+    if isinstance(target, ClaudeAgentSDKTargetConfig):
+        capabilities = set(target.claude_agent_sdk.capabilities)
+        if target.claude_agent_sdk.inject_mcp_config:
+            capabilities.add("mcp")
+        return capabilities
 
     if isinstance(target, LangGraphTargetConfig):
         return set(target.langgraph.capabilities)

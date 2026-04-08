@@ -22,6 +22,12 @@ from tddf.traps import build_document_content, build_html_page
 ROOT = Path(".").resolve()
 HERMES_BASE_HOME = ROOT / "tests/fixtures/hermes-home"
 OPENCLAW_BASE_HOME = ROOT / "tests/fixtures/openclaw-home"
+CLAUDE_AGENT_SDK_PYTHONPATH = os.pathsep.join(
+    [
+        str((ROOT / "tests/fixtures/claude_agent_sdk").resolve()),
+        os.environ.get("PYTHONPATH", ""),
+    ]
+)
 OPENAI_AGENTS_PYTHONPATH = os.pathsep.join(
     [
         str((ROOT / "tests/fixtures/openai_agents_sdk").resolve()),
@@ -91,6 +97,23 @@ OPENAI_AGENTS_TARGET = {
         "session_backend": "sqlite",
         "use_temp_session_dir": True,
         "tracing_disabled": True,
+    },
+}
+
+
+CLAUDE_AGENT_SDK_TARGET = {
+    "kind": "claude_agent_sdk",
+    "cwd": str(ROOT),
+    "env": {"PYTHONPATH": CLAUDE_AGENT_SDK_PYTHONPATH},
+    "claude_agent_sdk": {
+        "capabilities": ["web", "workspace", "mcp"],
+        "input_mode": "prompt",
+        "allowed_tools": ["Read", "Glob", "Grep"],
+        "permission_mode": "bypassPermissions",
+        "max_turns": 8,
+        "use_session": True,
+        "use_temp_home": True,
+        "inject_mcp_config": True,
     },
 }
 
@@ -347,6 +370,56 @@ def test_openai_agents_target_invocation_builds_expected_command(
     )
 
 
+def test_claude_agent_sdk_target_invocation_builds_expected_command(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **CLAUDE_AGENT_SDK_TARGET,
+                    "env": {"FOO": "bar", "PYTHONPATH": CLAUDE_AGENT_SDK_PYTHONPATH},
+                    "claude_agent_sdk": {
+                        **CLAUDE_AGENT_SDK_TARGET["claude_agent_sdk"],
+                        "system_prompt": "Be terse.",
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    invocation = build_target_invocation(
+        config,
+        config_path,
+        prompt="hello from claude sdk",
+        web_url="http://example.test/article",
+        attacker_url="http://example.test/collect",
+        mcp_url="http://example.test/mcp",
+        document_path=None,
+        deputy_workspace_dir=None,
+        deputy_secret_env_key=None,
+        deputy_secret_env_value=None,
+        session_id="session-789",
+        step_index=1,
+    )
+
+    assert Path(invocation.command[0]).name == Path(sys.executable).name
+    assert invocation.command[1:3] == ["-m", "tddf.claude_agent_sdk_runner"]
+    assert "--allowed-tools" in invocation.command
+    assert "--permission-mode" in invocation.command
+    assert invocation.cwd == ROOT
+    assert invocation.env["FOO"] == "bar"
+    assert invocation.env["TDDF_SESSION_ID"] == "session-789"
+    assert invocation.env["TDDF_STEP_INDEX"] == "1"
+    assert invocation.env["TDDF_CLAUDE_AGENT_SESSION_FILE"]
+    assert invocation.env["TDDF_CLAUDE_AGENT_MCP_URL"] == "http://example.test/mcp"
+    assert invocation.adapter_name == "claude_agent_sdk"
+    assert invocation.adapter_metadata["permission_mode"] == "bypassPermissions"
+
+
 def test_incompatible_hermes_config_fails_fast_before_execution(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -448,6 +521,14 @@ def test_describe_target_uses_generalized_adapter_contract(tmp_path: Path) -> No
         describe_target(openai_agents_config)
         == "openai_agents:tests.fixtures.mock_openai_agents_app:safe_agent"
     )
+
+    claude_agent_sdk_config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update({"target": CLAUDE_AGENT_SDK_TARGET}),
+    )
+    claude_agent_sdk_config = load_config(claude_agent_sdk_config_path)
+    assert describe_target(claude_agent_sdk_config) == "claude_agent_sdk"
 
 
 def test_print_run_batch_includes_capability_visibility(tmp_path: Path) -> None:
@@ -797,6 +878,86 @@ def test_openai_agents_multi_turn_uses_session_id(tmp_path: Path) -> None:
     assert trace_payload["session_item_count"] == 4
 
 
+def test_mock_claude_agent_sdk_target_passes(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration", "poisoned-workspace-search"],
+        transform=lambda raw: raw.update({"target": CLAUDE_AGENT_SDK_TARGET}),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+
+    assert batch.status == "passed"
+    assert len(batch.results) == 2
+    assert all(result.status == "passed" for result in batch.results)
+    assert all(result.adapter_name == "claude_agent_sdk" for result in batch.results)
+    assert all(
+        result.adapter_metadata["trace_captured"] is True for result in batch.results
+    )
+    assert all(
+        "claude_agent_sdk_trace.json" in result.adapter_artifact_contents
+        for result in batch.results
+    )
+
+
+def test_mock_claude_agent_sdk_target_fails_on_exfiltration(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **CLAUDE_AGENT_SDK_TARGET,
+                    "env": {
+                        "PYTHONPATH": CLAUDE_AGENT_SDK_PYTHONPATH,
+                        "TDDF_FAKE_CLAUDE_AGENT_BEHAVIOR": "exfil",
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert batch.status == "failed"
+    assert result.status == "failed"
+    assert result.adapter_name == "claude_agent_sdk"
+    assert any(item.kind == "network_request" for item in result.evidence)
+
+
+def test_claude_agent_sdk_multi_turn_uses_resume_session(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["multi-turn-context-poisoning"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **CLAUDE_AGENT_SDK_TARGET,
+                    "claude_agent_sdk": {
+                        **CLAUDE_AGENT_SDK_TARGET["claude_agent_sdk"],
+                        "capabilities": ["web", "mcp"],
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert result.status == "passed"
+    assert result.adapter_metadata["session_id"]
+    trace_payload = json.loads(
+        result.adapter_artifact_contents["claude_agent_sdk_trace.json"]
+    )
+    assert trace_payload["session_id"] == result.adapter_metadata["session_id"]
+    assert trace_payload["used_resume"] is True
+
+
 def test_hermes_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -905,6 +1066,33 @@ def test_openai_agents_artifacts_include_adapter_outputs(tmp_path: Path) -> None
     assert result_payload["adapter_name"] == "openai_agents"
     assert result_payload["adapter_metadata"]["trace_captured"] is True
     assert "openai_agents_trace.json" in result_payload["adapter_artifact_contents"]
+
+
+def test_claude_agent_sdk_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update({"target": CLAUDE_AGENT_SDK_TARGET}),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+    bundle = result.write_artifacts(resolve_artifacts_dir(config, config_path))
+
+    assert result.adapter_name == "claude_agent_sdk"
+    assert bundle.adapter_artifacts["claude_agent_sdk_trace.json"].exists()
+
+    trace_payload = json.loads(
+        bundle.adapter_artifacts["claude_agent_sdk_trace.json"].read_text()
+    )
+    assert trace_payload["result_subtype"] == "success"
+    assert trace_payload["session_id"]
+
+    result_payload = json.loads(bundle.result_json.read_text())
+    assert result_payload["adapter_name"] == "claude_agent_sdk"
+    assert result_payload["adapter_metadata"]["trace_captured"] is True
+    assert "claude_agent_sdk_trace.json" in result_payload["adapter_artifact_contents"]
 
 
 def test_exfil_agent_fails(tmp_path: Path) -> None:

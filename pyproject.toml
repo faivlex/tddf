@@ -13,17 +13,17 @@ classifiers = [
   "License :: OSI Approved :: MIT License",
   "Typing :: Typed",
 ]
-
-[project.urls]
-Homepage = "https://github.com/gonzalosr/tddf"
-Repository = "https://github.com/gonzalosr/tddf"
-Issues = "https://github.com/gonzalosr/tddf/issues"
 dependencies = [
   "pydantic>=2.11.0,<3.0.0",
   "pyyaml>=6.0.2,<7.0.0",
   "rich>=14.0.0,<15.0.0",
   "typer>=0.16.0,<0.17.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gonzalosr/tddf"
+Repository = "https://github.com/gonzalosr/tddf"
+Issues = "https://github.com/gonzalosr/tddf/issues"
 
 [project.scripts]
 tddf = "tddf.cli:app"

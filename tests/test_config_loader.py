@@ -10,6 +10,12 @@ from tddf.config_loader import ConfigError, load_config
 
 
 ROOT = Path(".").resolve()
+CLAUDE_AGENT_SDK_PYTHONPATH = os.pathsep.join(
+    [
+        str((ROOT / "tests/fixtures/claude_agent_sdk").resolve()),
+        os.environ.get("PYTHONPATH", ""),
+    ]
+)
 OPENAI_AGENTS_PYTHONPATH = os.pathsep.join(
     [
         str((ROOT / "tests/fixtures/openai_agents_sdk").resolve()),
@@ -73,6 +79,23 @@ OPENAI_AGENTS_TARGET = {
         "session_backend": "sqlite",
         "use_temp_session_dir": True,
         "tracing_disabled": True,
+    },
+}
+
+
+CLAUDE_AGENT_SDK_TARGET = {
+    "kind": "claude_agent_sdk",
+    "cwd": str(ROOT),
+    "env": {"PYTHONPATH": CLAUDE_AGENT_SDK_PYTHONPATH},
+    "claude_agent_sdk": {
+        "capabilities": ["web", "workspace", "mcp"],
+        "input_mode": "prompt",
+        "allowed_tools": ["Read", "Glob", "Grep"],
+        "permission_mode": "bypassPermissions",
+        "max_turns": 8,
+        "use_session": True,
+        "use_temp_home": True,
+        "inject_mcp_config": True,
     },
 }
 
@@ -219,6 +242,37 @@ def test_load_config_accepts_openai_agents_target(tmp_path: Path) -> None:
 
     assert config.target.kind == "openai_agents"
     assert config.target_capabilities == {"web", "workspace", "mcp"}
+
+
+def test_load_config_accepts_claude_agent_sdk_target(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("tddf.yaml").read_text())
+    raw["target"] = CLAUDE_AGENT_SDK_TARGET
+    raw["scenarios"] = [raw["scenarios"][0], raw["scenarios"][3]]
+    config_path = _write_config(tmp_path, raw, "claude-agent-sdk.yaml")
+
+    config = load_config(config_path)
+
+    assert config.target.kind == "claude_agent_sdk"
+    assert config.target_capabilities == {"web", "workspace", "mcp"}
+
+
+def test_load_config_accepts_claude_agent_sdk_transport_reference(
+    tmp_path: Path,
+) -> None:
+    raw = yaml.safe_load(Path("tddf.yaml").read_text())
+    raw["target"] = {
+        "kind": "claude_agent_sdk",
+        "cwd": str(ROOT),
+        "env": {},
+        "claude_agent_sdk": {
+            "transport": "tests.fixtures.real_claude_agent_transport",
+        },
+    }
+    config_path = _write_config(tmp_path, raw, "invalid-claude-agent-sdk.yaml")
+
+    config = load_config(config_path)
+
+    assert config.target.kind == "claude_agent_sdk"
 
 
 def test_load_config_rejects_invalid_openai_agents_reference(tmp_path: Path) -> None:

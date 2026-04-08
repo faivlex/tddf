@@ -67,6 +67,23 @@ def test_init_writes_loadable_langgraph_template(tmp_path: Path) -> None:
     assert config.scenario_definitions[0].requires_mcp is True
 
 
+def test_init_writes_loadable_claude_agent_sdk_template(tmp_path: Path) -> None:
+    config_path = tmp_path / "tddf-claude-agent-sdk.yaml"
+
+    result = runner.invoke(
+        app,
+        ["init", "--config", str(config_path), "--adapter", "claude_agent_sdk"],
+    )
+
+    assert result.exit_code == 0
+    assert config_path.exists()
+
+    config = load_config(config_path)
+    assert config.target.kind == "claude_agent_sdk"
+    assert config.target.claude_agent_sdk.use_session is True
+    assert config.scenario_definitions[0].requires_mcp is True
+
+
 def test_import_injecagent_writes_registry(tmp_path: Path) -> None:
     output_path = tmp_path / "injecagent.yaml"
     source_path = Path("tests/fixtures/injecagent").resolve()

@@ -166,6 +166,16 @@ def validate(
         ).strip()
         console.print("[green]OpenAI Agents options:[/green]")
         console.print(openai_agents_payload)
+    if loaded.target.kind == "claude_agent_sdk":
+        claude_agent_sdk_payload = yaml.safe_dump(
+            _normalize_for_output(
+                loaded.target.claude_agent_sdk.model_dump(mode="python")
+            ),
+            sort_keys=False,
+            allow_unicode=True,
+        ).strip()
+        console.print("[green]Claude Agent SDK options:[/green]")
+        console.print(claude_agent_sdk_payload)
 
 
 @import_app.command("injecagent")

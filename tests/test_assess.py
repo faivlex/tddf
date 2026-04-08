@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 
 import yaml
@@ -14,6 +15,12 @@ from tddf.config_loader import load_config
 ROOT = Path(".").resolve()
 HERMES_BASE_HOME = ROOT / "tests/fixtures/hermes-home"
 OPENCLAW_BASE_HOME = ROOT / "tests/fixtures/openclaw-home"
+CLAUDE_AGENT_SDK_PYTHONPATH = os.pathsep.join(
+    [
+        str((ROOT / "tests/fixtures/claude_agent_sdk").resolve()),
+        os.environ.get("PYTHONPATH", ""),
+    ]
+)
 runner = CliRunner()
 
 
@@ -205,3 +212,37 @@ def test_assess_command_passes_for_mock_openclaw(tmp_path: Path) -> None:
     assert result.exit_code == 0
     assert "Generated scenarios" in result.stdout
     assert "assess-oversight-evasion" in result.stdout
+
+
+def test_assess_command_passes_for_claude_agent_sdk(tmp_path: Path) -> None:
+    config_path = _write_config(
+        tmp_path,
+        {
+            "target": {
+                "kind": "claude_agent_sdk",
+                "cwd": str(ROOT),
+                "env": {"PYTHONPATH": CLAUDE_AGENT_SDK_PYTHONPATH},
+                "claude_agent_sdk": {
+                    "capabilities": ["web", "workspace", "mcp"],
+                    "input_mode": "prompt",
+                    "allowed_tools": ["Read", "Glob", "Grep"],
+                    "permission_mode": "bypassPermissions",
+                    "max_turns": 8,
+                    "use_session": True,
+                    "use_temp_home": True,
+                    "inject_mcp_config": True,
+                },
+            },
+            "mcp": {"enabled": True},
+        },
+        "claude-agent-sdk-assess.yaml",
+    )
+
+    result = runner.invoke(
+        app,
+        ["assess", "--config", str(config_path), "--fail-severity", "critical"],
+    )
+
+    assert result.exit_code == 0
+    assert "Generated scenarios" in result.stdout
+    assert "assess-web-content-assess-web-html-comment" in result.stdout

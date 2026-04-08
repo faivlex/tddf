@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 import yaml
 
 from tddf.config import (
+    ClaudeAgentSDKTargetConfig,
     CommandTargetConfig,
     HermesTargetConfig,
     LangGraphTargetConfig,
@@ -180,6 +181,61 @@ def _build_openai_agents_command(target: OpenAIAgentsTargetConfig) -> list[str]:
         )
     if target.openai_agents.tracing_disabled:
         command.append("--tracing-disabled")
+    return command
+
+
+def _build_claude_agent_sdk_command(target: ClaudeAgentSDKTargetConfig) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "tddf.claude_agent_sdk_runner",
+        "--input-mode",
+        target.claude_agent_sdk.input_mode,
+        "--allowed-tools",
+        json.dumps(target.claude_agent_sdk.allowed_tools, ensure_ascii=False),
+        "--disallowed-tools",
+        json.dumps(target.claude_agent_sdk.disallowed_tools, ensure_ascii=False),
+        "--extra-args",
+        json.dumps(
+            _normalize_for_json(target.claude_agent_sdk.extra_args),
+            sort_keys=True,
+            ensure_ascii=False,
+        ),
+    ]
+    if target.claude_agent_sdk.input_template is not None:
+        command.extend(
+            [
+                "--input-template",
+                json.dumps(
+                    _normalize_for_json(target.claude_agent_sdk.input_template),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+    if target.claude_agent_sdk.permission_mode is not None:
+        command.extend(["--permission-mode", target.claude_agent_sdk.permission_mode])
+    if target.claude_agent_sdk.system_prompt is not None:
+        command.extend(["--system-prompt", target.claude_agent_sdk.system_prompt])
+    if target.claude_agent_sdk.model is not None:
+        command.extend(["--model", target.claude_agent_sdk.model])
+    if target.claude_agent_sdk.max_turns is not None:
+        command.extend(["--max-turns", str(target.claude_agent_sdk.max_turns)])
+    if target.claude_agent_sdk.include_partial_messages:
+        command.append("--include-partial-messages")
+    if target.claude_agent_sdk.cli_path is not None:
+        command.extend(["--cli-path", str(target.claude_agent_sdk.cli_path)])
+    if target.claude_agent_sdk.setting_sources is not None:
+        command.extend(
+            [
+                "--setting-sources",
+                ",".join(target.claude_agent_sdk.setting_sources),
+            ]
+        )
+    if target.claude_agent_sdk.use_session:
+        command.append("--use-session")
+    if target.claude_agent_sdk.transport is not None:
+        command.extend(["--transport", target.claude_agent_sdk.transport])
     return command
 
 
@@ -391,6 +447,64 @@ def _maybe_prepare_openai_agents_session(
     return env, cleanup_dirs, metadata, {}
 
 
+def _maybe_prepare_claude_agent_sdk_home(
+    config: TddfConfig,
+    mcp_url: str | None,
+) -> tuple[
+    dict[str, str], list[TemporaryDirectory[str]], dict[str, object], dict[str, str]
+]:
+    if not isinstance(config.target, ClaudeAgentSDKTargetConfig):
+        return {}, [], {}, {}
+
+    metadata: dict[str, object] = {
+        "kind": "claude_agent_sdk",
+        "input_mode": config.target.claude_agent_sdk.input_mode,
+        "allowed_tools": list(config.target.claude_agent_sdk.allowed_tools),
+        "disallowed_tools": list(config.target.claude_agent_sdk.disallowed_tools),
+        "permission_mode": config.target.claude_agent_sdk.permission_mode,
+        "model": config.target.claude_agent_sdk.model,
+        "max_turns": config.target.claude_agent_sdk.max_turns,
+        "use_session": config.target.claude_agent_sdk.use_session,
+        "use_temp_home": config.target.claude_agent_sdk.use_temp_home,
+        "inject_mcp_config": config.target.claude_agent_sdk.inject_mcp_config,
+        "transport": config.target.claude_agent_sdk.transport,
+    }
+
+    cleanup_dirs: list[TemporaryDirectory[str]] = []
+    env: dict[str, str] = {}
+    artifact_contents: dict[str, str] = {}
+
+    if config.target.claude_agent_sdk.use_temp_home:
+        temp_home = TemporaryDirectory(prefix="tddf-claude-agent-home-")
+        cleanup_dirs.append(temp_home)
+        temp_home_path = Path(temp_home.name)
+
+        base_home = config.target.claude_agent_sdk.base_home_dir
+        if base_home is None:
+            base_home = Path.home() / ".claude"
+        claude_dir = temp_home_path / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        _copy_tree_if_exists(base_home, claude_dir)
+        env["HOME"] = str(temp_home_path)
+        metadata["temp_home_dir"] = str(temp_home_path)
+        metadata["claude_dir"] = str(claude_dir)
+
+    if config.target.claude_agent_sdk.use_session:
+        if "HOME" in env:
+            state_root = Path(env["HOME"]) / ".claude"
+        else:
+            state_root = Path.home() / ".claude"
+        state_root.mkdir(parents=True, exist_ok=True)
+        session_state_path = state_root / "tddf-session.json"
+        env["TDDF_CLAUDE_AGENT_SESSION_FILE"] = str(session_state_path)
+        metadata["session_state_path"] = str(session_state_path)
+
+    if config.target.claude_agent_sdk.inject_mcp_config and mcp_url is not None:
+        env["TDDF_CLAUDE_AGENT_MCP_URL"] = mcp_url
+
+    return env, cleanup_dirs, metadata, artifact_contents
+
+
 @dataclass(slots=True)
 class AdapterHome:
     env: dict[str, str]
@@ -414,6 +528,17 @@ def prepare_adapter_home(
             adapter_name="command",
             adapter_metadata={"kind": "command"},
             adapter_artifact_contents={},
+        )
+    if isinstance(config.target, ClaudeAgentSDKTargetConfig):
+        env, cleanup_dirs, metadata, artifacts = _maybe_prepare_claude_agent_sdk_home(
+            config, mcp_url
+        )
+        return AdapterHome(
+            env=env,
+            cleanup_dirs=cleanup_dirs,
+            adapter_name="claude_agent_sdk",
+            adapter_metadata=metadata,
+            adapter_artifact_contents=artifacts,
         )
     if isinstance(config.target, OpenAIAgentsTargetConfig):
         env, cleanup_dirs, metadata, artifacts = _maybe_prepare_openai_agents_session(
@@ -511,6 +636,8 @@ def build_target_invocation(
 
     if isinstance(config.target, CommandTargetConfig):
         command = config.target.command
+    elif isinstance(config.target, ClaudeAgentSDKTargetConfig):
+        command = _build_claude_agent_sdk_command(config.target)
     elif isinstance(config.target, OpenAIAgentsTargetConfig):
         command = _build_openai_agents_command(config.target)
     elif isinstance(config.target, LangGraphTargetConfig):
@@ -563,6 +690,12 @@ def _extract_openai_agents_trace(
     return _extract_trace(stdout, "TDDF_OPENAI_AGENTS_TRACE=")
 
 
+def _extract_claude_agent_sdk_trace(
+    stdout: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    return _extract_trace(stdout, "TDDF_CLAUDE_AGENT_SDK_TRACE=")
+
+
 def _extract_openclaw_result(
     stdout: str,
 ) -> tuple[dict[str, object] | None, str | None]:
@@ -595,6 +728,21 @@ def collect_adapter_observability(
             adapter_metadata["trace_parse_error"] = trace_error
         if trace_payload is not None:
             adapter_artifact_contents["hermes_trace.json"] = (
+                json.dumps(trace_payload, indent=2) + "\n"
+            )
+    elif invocation.adapter_name == "claude_agent_sdk":
+        trace_payload, trace_error = _extract_claude_agent_sdk_trace(stdout)
+        adapter_metadata["stdout_line_count"] = len(stdout.splitlines())
+        adapter_metadata["stderr_line_count"] = len(stderr.splitlines())
+        adapter_metadata["trace_captured"] = trace_payload is not None
+        if trace_error is not None:
+            adapter_metadata["trace_parse_error"] = trace_error
+        if trace_payload is not None:
+            adapter_metadata["message_count"] = trace_payload.get("message_count")
+            adapter_metadata["session_id"] = trace_payload.get("session_id")
+            adapter_metadata["result_subtype"] = trace_payload.get("result_subtype")
+            adapter_metadata["used_resume"] = trace_payload.get("used_resume")
+            adapter_artifact_contents["claude_agent_sdk_trace.json"] = (
                 json.dumps(trace_payload, indent=2) + "\n"
             )
     elif invocation.adapter_name == "openai_agents":
@@ -660,6 +808,8 @@ def collect_adapter_observability(
 def describe_target(config: TddfConfig) -> str:
     if isinstance(config.target, CommandTargetConfig):
         return " ".join(config.target.command)
+    if isinstance(config.target, ClaudeAgentSDKTargetConfig):
+        return "claude_agent_sdk"
     if isinstance(config.target, OpenAIAgentsTargetConfig):
         return f"openai_agents:{config.target.openai_agents.agent}"
     if isinstance(config.target, LangGraphTargetConfig):

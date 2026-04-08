@@ -48,7 +48,7 @@ Every scenario maps to [OWASP LLM Top 10](https://owasp.org/www-project-top-10-f
 
 ## Adapters
 
-Works with any agent invoked as a subprocess. Five built-in adapters:
+Works with any agent invoked as a subprocess. Six built-in adapters:
 
 | Adapter | Target | Session continuity |
 |---------|--------|-------------------|
@@ -57,10 +57,12 @@ Works with any agent invoked as a subprocess. Five built-in adapters:
 | `openclaw` | [OpenClaw](https://github.com/open-claw/openclaw) | `--session-id` |
 | `langgraph` | [LangGraph](https://github.com/langchain-ai/langgraph) | `thread_id` |
 | `openai_agents` | [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) | SQLite session |
+| `claude_agent_sdk` | [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) | persisted SDK session ID |
 
 ```bash
 tddf init --adapter hermes --config tddf-hermes.yaml
 tddf init --adapter langgraph --config tddf-langgraph.yaml
+tddf init --adapter claude_agent_sdk --config tddf-claude-agent-sdk.yaml
 ```
 
 See [examples/configs/](examples/configs/) for adapter-specific sample configs.
