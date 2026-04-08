@@ -198,6 +198,8 @@ Each run produces per-scenario artifacts under `.tddf/artifacts/<run_id>/<scenar
 
 A batch-level JUnit XML is written to `.tddf/artifacts/<run_id>/junit.xml` for CI integration.
 
+See [docs/github-actions.md](docs/github-actions.md) for a reusable GitHub Action and workflow example.
+
 ## Why Now
 
 [Promptfoo was acquired by OpenAI](https://www.promptfoo.dev/blog/promptfoo-joining-openai/) in March 2026. It remains open source, but its roadmap is now shaped by OpenAI's priorities and Frontier integration. The [DeepMind "Agent Traps" paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6372438) documented six categories of real attacks against tool-using agents. The EU AI Act goes fully enforceable August 2, 2026.

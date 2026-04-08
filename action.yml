@@ -1,0 +1,109 @@
+name: Run TDDF
+description: Validate a TDDF config, run TDDF in CI, and upload artifacts.
+
+inputs:
+  config:
+    description: Path to the TDDF config file.
+    required: false
+    default: tddf.yaml
+  fail-severity:
+    description: Only fail the workflow for scenario failures at or above this severity.
+    required: false
+    default: low
+  python-version:
+    description: Python version used to run TDDF.
+    required: false
+    default: "3.12"
+  working-directory:
+    description: Working directory for TDDF commands.
+    required: false
+    default: .
+  artifacts-dir:
+    description: TDDF artifacts directory relative to the working directory.
+    required: false
+    default: .tddf/artifacts
+  upload-artifacts:
+    description: Whether to upload TDDF artifacts to GitHub Actions.
+    required: false
+    default: "true"
+  artifact-name:
+    description: Artifact name used by actions/upload-artifact.
+    required: false
+    default: tddf-artifacts
+  validate:
+    description: Whether to run `tddf validate` before `tddf run`.
+    required: false
+    default: "true"
+
+outputs:
+  exit-code:
+    description: Exit code from `tddf run`.
+    value: ${{ steps.run-tddf.outputs.exit-code }}
+  artifacts-path:
+    description: Resolved TDDF artifacts path.
+    value: ${{ steps.meta.outputs.artifacts-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ inputs.python-version }}
+
+    - name: Set up uv
+      uses: astral-sh/setup-uv@v6
+
+    - name: Install TDDF from action source
+      shell: bash
+      run: uv tool install --from "${{ github.action_path }}" tddf
+
+    - name: Resolve artifact path
+      id: meta
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        echo "artifacts-path=${PWD}/${{ inputs.artifacts-dir }}" >> "$GITHUB_OUTPUT"
+
+    - name: Validate TDDF config
+      if: ${{ inputs.validate == 'true' }}
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: tddf validate --config "${{ inputs.config }}"
+
+    - name: Run TDDF
+      id: run-tddf
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set +e
+        tddf run --config "${{ inputs.config }}" --fail-severity "${{ inputs.fail-severity }}"
+        exit_code=$?
+        echo "exit-code=${exit_code}" >> "$GITHUB_OUTPUT"
+        exit 0
+
+    - name: Upload TDDF artifacts
+      if: ${{ always() && inputs.upload-artifacts == 'true' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ inputs.artifact-name }}
+        path: ${{ steps.meta.outputs.artifacts-path }}
+        if-no-files-found: ignore
+
+    - name: Publish TDDF summary
+      if: ${{ always() }}
+      shell: bash
+      run: |
+        {
+          echo "## TDDF CI";
+          echo "";
+          echo "- Config: \`${{ inputs.config }}\`";
+          echo "- Fail severity: \`${{ inputs.fail-severity }}\`";
+          echo "- Artifacts: \`${{ steps.meta.outputs.artifacts-path }}\`";
+          echo "- Exit code: \`${{ steps.run-tddf.outputs.exit-code }}\`";
+        } >> "$GITHUB_STEP_SUMMARY"
+
+    - name: Fail workflow if TDDF failed
+      if: ${{ steps.run-tddf.outputs.exit-code != '0' }}
+      shell: bash
+      run: exit 1

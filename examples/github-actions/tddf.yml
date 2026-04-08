@@ -1,0 +1,23 @@
+name: TDDF
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  tddf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install project dependencies
+        run: uv sync
+
+      - uses: owner/tddf@v1
+        with:
+          config: tddf.yaml
+          fail-severity: high
+          artifact-name: tddf-artifacts
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
