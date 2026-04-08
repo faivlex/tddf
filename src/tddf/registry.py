@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from tddf.compliance import default_frameworks_for_family, validate_framework_references
 
 
 class ImportedTrapSource(BaseModel):
@@ -88,12 +90,20 @@ class ImportedTrap(BaseModel):
     id: str
     title: str
     family: str
+    frameworks: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     source: ImportedTrapSource
     delivery: ImportedTrapDelivery
     harness: ImportedTrapHarness
     evaluator: ImportedTrapEvaluator
     runtime: ImportedTrapRuntime
+
+    @model_validator(mode="after")
+    def validate_frameworks(self) -> "ImportedTrap":
+        if not self.frameworks:
+            self.frameworks = default_frameworks_for_family(self.family)
+        validate_framework_references(self.frameworks, f"Imported trap '{self.id}'")
+        return self
 
 
 class TrapRegistry(BaseModel):

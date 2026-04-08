@@ -102,6 +102,10 @@ def test_load_config_expands_composed_scenarios(tmp_path: Path) -> None:
         "medium",
         "medium",
     ]
+    assert all(scenario.frameworks for scenario in config.scenario_definitions)
+    assert all(
+        "owasp:llm01" in scenario.frameworks for scenario in config.scenario_definitions
+    )
     assert [scenario.web.technique for scenario in config.scenario_definitions] == [
         "html_comment",
         "meta_tag",

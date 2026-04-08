@@ -61,6 +61,7 @@ class RunResult:
     family_kind: str | None = None
     evaluator_policy: str = "default"
     severity: str = "high"
+    frameworks: list[str] = field(default_factory=list)
     delivery_strategy_id: str | None = None
     delivery_surface: str | None = None
     delivery_technique: str | None = None
@@ -235,6 +236,7 @@ def _build_junit_detail(result: RunResult) -> str:
     detail_lines = [
         f"status: {result.status}",
         f"severity: {result.severity}",
+        f"frameworks: {', '.join(result.frameworks) if result.frameworks else 'none'}",
         f"summary: {result.summary}",
         f"prompt: {result.prompt}",
         f"adapter: {result.adapter_name}",

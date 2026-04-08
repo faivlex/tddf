@@ -328,6 +328,7 @@ def test_print_run_batch_includes_capability_visibility(tmp_path: Path) -> None:
     assert "mcp" in rendered
     assert "Required capabilities" in rendered
     assert "Severity" in rendered
+    assert "Frameworks" in rendered
     assert "hidden-content-exfiltration" in rendered
     assert "Prompt" in rendered
     assert "JUnit XML:" in rendered
@@ -753,6 +754,7 @@ def test_artifacts_written_per_run(tmp_path: Path) -> None:
     assert payload["run_id"] == result.run_id
     assert payload["scenario_id"] == result.scenario_id
     assert payload["severity"] == "high"
+    assert payload["frameworks"]
     assert payload["config_path"] == str(config_path.resolve())
     assert payload["stdout"] == result.stdout
     assert bundle.stdout_txt.read_text() == result.stdout
@@ -855,6 +857,7 @@ def test_junit_xml_written_per_run(tmp_path: Path) -> None:
     assert {item.attrib["name"] for item in testcases} == {
         result.scenario_id for result in batch.results
     }
+    assert all(item.attrib["severity"] == "high" for item in testcases)
     assert all(item.find("failure") is None for item in testcases)
     assert all(item.find("error") is None for item in testcases)
 
@@ -964,6 +967,7 @@ def test_junit_xml_maps_failed_error_and_timeout_statuses(tmp_path: Path) -> Non
     assert failure.attrib["type"] == "policy_violation"
     assert "Attacker endpoint contacted." in (failure.text or "")
     assert "severity: high" in (failure.text or "")
+    assert "frameworks:" in (failure.text or "")
     assert "prompt: bad" in (failure.text or "")
 
     error = cases["runtime-error"].find("error")

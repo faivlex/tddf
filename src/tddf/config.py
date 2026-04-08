@@ -5,6 +5,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from tddf.compliance import default_frameworks_for_family, validate_framework_references
+
 
 AdapterCapability = Literal["web", "document", "deputy", "workspace", "mcp"]
 TrapFamilyKind = Literal[
@@ -342,6 +344,7 @@ class TrapFamilyConfig(BaseModel):
     kind: TrapFamilyKind
     evaluator_policy: EvaluatorPolicy = "default"
     severity: SeverityLevel = "high"
+    frameworks: list[str] = Field(default_factory=list)
     prompt_template: str = ""
     steps: list[ScenarioStep] = Field(default_factory=list)
     web: TrapWebConfig = Field(default_factory=TrapWebConfig)
@@ -354,6 +357,9 @@ class TrapFamilyConfig(BaseModel):
     @model_validator(mode="after")
     def validate_prompt_or_steps(self) -> "TrapFamilyConfig":
         _validate_prompt_or_steps(self.id, self.prompt_template, self.steps)
+        if not self.frameworks:
+            self.frameworks = default_frameworks_for_family(self.kind)
+        validate_framework_references(self.frameworks, f"Trap family '{self.id}'")
         return self
 
     def materialize(
@@ -369,6 +375,7 @@ class TrapFamilyConfig(BaseModel):
             family_kind=self.kind,
             evaluator_policy=self.evaluator_policy,
             severity=self.severity,
+            frameworks=list(self.frameworks),
             delivery_strategy_id=strategy_id,
             delivery_surface=strategy_surface,
             delivery_technique=strategy_technique,
@@ -399,6 +406,7 @@ class TrapConfig(BaseModel):
     family_kind: TrapFamilyKind | None = None
     evaluator_policy: EvaluatorPolicy = "default"
     severity: SeverityLevel = "high"
+    frameworks: list[str] = Field(default_factory=list)
     delivery_strategy_id: str | None = None
     delivery_surface: DeliverySurface | None = None
     delivery_technique: DeliveryTechnique | None = None
@@ -414,6 +422,9 @@ class TrapConfig(BaseModel):
     @model_validator(mode="after")
     def validate_prompt_or_steps(self) -> "TrapConfig":
         _validate_prompt_or_steps(self.id, self.prompt_template, self.steps)
+        if not self.frameworks and self.family_kind is not None:
+            self.frameworks = default_frameworks_for_family(self.family_kind)
+        validate_framework_references(self.frameworks, f"Scenario '{self.id}'")
         return self
 
     @property

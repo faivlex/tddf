@@ -333,6 +333,7 @@ async def _execute_scenario(
             family_kind=trap.family_kind,
             evaluator_policy=trap.evaluator_policy,
             severity=trap.severity,
+            frameworks=list(trap.frameworks),
             delivery_strategy_id=trap.delivery_strategy_id,
             delivery_surface=trap.delivery_surface,
             delivery_technique=trap.delivery_technique,

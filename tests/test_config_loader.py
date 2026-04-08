@@ -80,6 +80,20 @@ def test_load_default_config_exposes_expected_capabilities() -> None:
         {"web", "mcp"},
     ]
     assert all(scenario.severity == "high" for scenario in config.scenario_definitions)
+    assert all(scenario.frameworks for scenario in config.scenario_definitions)
+    assert all(
+        any(ref.startswith("owasp:") for ref in scenario.frameworks)
+        for scenario in config.scenario_definitions
+    )
+
+
+def test_load_config_rejects_invalid_framework_reference(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("tddf.yaml").read_text())
+    raw["scenarios"][0]["frameworks"] = ["llm01"]
+    config_path = _write_config(tmp_path, raw, "invalid-framework.yaml")
+
+    with pytest.raises(ConfigError, match="invalid framework references"):
+        load_config(config_path)
 
 
 def test_load_config_rejects_hermes_mcp_injection_without_temp_home(

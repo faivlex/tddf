@@ -28,6 +28,8 @@ def _print_single_result(
     table.add_row("Status", result.status.upper())
     table.add_row("Severity", result.severity.upper())
     table.add_row("Trap", result.trap_id)
+    if result.frameworks:
+        table.add_row("Frameworks", ", ".join(result.frameworks))
     table.add_row("Summary", result.summary)
     table.add_row("Prompt", result.prompt)
     table.add_row("Target", " ".join(result.target_command))

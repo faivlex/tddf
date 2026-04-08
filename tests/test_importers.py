@@ -29,6 +29,7 @@ def test_import_injecagent_from_local_fixture(tmp_path: Path) -> None:
     first = registry.traps[0]
     assert first.id == "injecagent-ds-base-0001"
     assert first.family == "behavioural_control"
+    assert "owasp:llm01" in first.frameworks
     assert first.source.path == "data/test_cases_ds_base.json"
     assert first.source.license == "MIT"
     assert first.delivery.kind == "web_html"
@@ -60,3 +61,4 @@ def test_trap_registry_round_trip(tmp_path: Path) -> None:
     assert loaded.source_revision == "fixture-sha"
     assert len(loaded.traps) == 1
     assert loaded.traps[0].id == "injecagent-ds-base-0001"
+    assert loaded.traps[0].frameworks
