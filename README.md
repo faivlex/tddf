@@ -94,9 +94,36 @@ uv run tddf --help
 | Command | What it does |
 |---------|-------------|
 | `tddf init` | Write a starter config for a given adapter |
+| `tddf import injecagent` | Import attack payloads from the InjecAgent benchmark |
 | `tddf validate` | Check config shape, capability compatibility, and show resolved targets |
 | `tddf run` | Execute all scenarios and write artifacts |
 | `tddf version` | Print the installed version |
+
+## External Payload Imports
+
+TDDF ships with built-in trap scenarios, but you can also import attack payloads from academic benchmarks. The importer pulls a dataset at a pinned commit, converts each case into a structured registry file with provenance and licensing metadata, and saves it locally for future use.
+
+Import from [InjecAgent](https://github.com/uiuc-kang-lab/InjecAgent) (1,054 indirect prompt injection cases):
+
+```bash
+tddf import injecagent \
+  --revision f19c9f2c79a41046eb13c03c51a24c567a8ffa07 \
+  --output research/registry/injecagent-ds-base.yaml \
+  --limit 25
+```
+
+Or import from a local checkout of the same pinned snapshot:
+
+```bash
+tddf import injecagent \
+  --source-path /path/to/InjecAgent \
+  --revision f19c9f2c79a41046eb13c03c51a24c567a8ffa07 \
+  --output research/registry/injecagent-ds-base.yaml
+```
+
+Each imported case keeps its source repo, pinned revision, original case ID, license, and citation — so you always know where a payload came from.
+
+Imported registries are local files for planning and future scenario generation. `tddf run` still executes the built-in TDDF scenarios only.
 
 ## Artifacts
 

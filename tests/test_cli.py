@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from tddf.cli import app
 from tddf.config_loader import load_config
+from tddf.registry import load_trap_registry
 
 
 runner = CliRunner()
@@ -16,6 +17,7 @@ def test_help_mentions_init_command() -> None:
 
     assert result.exit_code == 0
     assert "init" in result.stdout
+    assert "import" in result.stdout
     assert "validate" in result.stdout
     assert "run" in result.stdout
 
@@ -45,3 +47,32 @@ def test_init_rejects_existing_file_without_force(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert "Refusing to overwrite existing config" in result.stdout
+
+
+def test_import_injecagent_writes_registry(tmp_path: Path) -> None:
+    output_path = tmp_path / "injecagent.yaml"
+    source_path = Path("tests/fixtures/injecagent").resolve()
+
+    result = runner.invoke(
+        app,
+        [
+            "import",
+            "injecagent",
+            "--source-path",
+            str(source_path),
+            "--revision",
+            "fixture-sha",
+            "--output",
+            str(output_path),
+            "--limit",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert output_path.exists()
+
+    registry = load_trap_registry(output_path)
+    assert registry.source_name == "injecagent-ds-base"
+    assert len(registry.traps) == 1
+    assert registry.traps[0].source.revision == "fixture-sha"

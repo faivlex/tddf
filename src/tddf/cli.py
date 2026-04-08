@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import typer
@@ -9,7 +10,16 @@ from rich.console import Console
 
 from tddf import __version__
 from tddf.config_loader import DEFAULT_CONFIG_PATH, ConfigError, load_config
+from tddf.importers.injecagent import (
+    DEFAULT_INJECAGENT_LICENSE,
+    DEFAULT_INJECAGENT_REPO,
+    InjecAgentAttackKind,
+    InjecAgentImportRequest,
+    InjecAgentSetting,
+    import_injecagent,
+)
 from tddf.output import print_run_batch
+from tddf.registry import write_trap_registry
 from tddf.runner import execute_run
 from tddf.target import describe_target, resolve_artifacts_dir
 from tddf.templates import TemplateAdapter, render_config
@@ -51,6 +61,7 @@ app = typer.Typer(
     epilog=(
         "Examples:\n"
         "  tddf init --adapter command\n"
+        "  tddf import injecagent --revision <sha> --output registry.yaml\n"
         "  tddf validate --config tddf.yaml\n"
         "  tddf run --config tddf.yaml\n\n"
         "Docs: https://github.com/your-org/tddf"
@@ -58,6 +69,10 @@ app = typer.Typer(
     no_args_is_help=True,
     pretty_exceptions_show_locals=False,
 )
+import_app = typer.Typer(
+    help="Import attack payloads from academic benchmarks into local registry files."
+)
+app.add_typer(import_app, name="import")
 console = Console()
 
 
@@ -127,6 +142,54 @@ def validate(
         ).strip()
         console.print("[green]OpenClaw options:[/green]")
         console.print(openclaw_payload)
+
+
+@import_app.command("injecagent")
+def import_injecagent_command(
+    output: Path = typer.Option(..., "--output"),
+    revision: str = typer.Option(
+        ..., "--revision", help="Pinned InjecAgent commit, tag, or branch ref."
+    ),
+    source_path: Path | None = typer.Option(
+        None,
+        "--source-path",
+        exists=False,
+        file_okay=False,
+        dir_okay=True,
+        help="Optional local InjecAgent checkout or fixture directory.",
+    ),
+    attack_kind: InjecAgentAttackKind = typer.Option(
+        InjecAgentAttackKind.DATA_STEALING, "--attack-kind"
+    ),
+    setting: InjecAgentSetting = typer.Option(InjecAgentSetting.BASE, "--setting"),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    source_repo: str = typer.Option(DEFAULT_INJECAGENT_REPO, "--source-repo"),
+    source_license: str = typer.Option(DEFAULT_INJECAGENT_LICENSE, "--source-license"),
+) -> None:
+    """Import InjecAgent benchmark cases into a local registry file with provenance."""
+    request = InjecAgentImportRequest(
+        revision=revision,
+        attack_kind=attack_kind,
+        setting=setting,
+        source_repo=source_repo,
+        source_license=source_license,
+        source_path=source_path.resolve() if source_path is not None else None,
+        limit=limit,
+    )
+    try:
+        registry = import_injecagent(request)
+    except (FileNotFoundError, OSError, ValueError, json.JSONDecodeError) as error:
+        console.print(f"[red]Import failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    resolved_output = output.resolve()
+    write_trap_registry(resolved_output, registry)
+    console.print(
+        f"[green]Imported[/green] {len(registry.traps)} InjecAgent traps to {resolved_output}"
+    )
+    console.print(
+        f"[green]Source:[/green] {registry.source_repo}@{registry.source_revision}"
+    )
 
 
 @app.command()

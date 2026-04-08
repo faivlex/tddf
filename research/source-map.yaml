@@ -442,7 +442,7 @@ source_index:
     family:
       - content_injection
       - behavioural_control
-    reference: git-disl/InjecAgent
+    reference: uiuc-kang-lab/InjecAgent
     usage: import_candidate
     license_status: review_required
     attribution_required: true
