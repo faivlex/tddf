@@ -113,5 +113,6 @@ mcp:
 output:
   artifacts_dir: .tddf/artifacts
   write_json: true
+  write_junit: true
 run:
   timeout_seconds: 10

@@ -277,6 +277,7 @@ class OutputConfig(BaseModel):
 
     artifacts_dir: Path = Path(".tddf/artifacts")
     write_json: bool = True
+    write_junit: bool = True
 
 
 class RunConfig(BaseModel):

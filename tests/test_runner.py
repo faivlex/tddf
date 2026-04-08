@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import xml.etree.ElementTree as ET
 from io import StringIO
 from pathlib import Path
 from typing import Any, Callable
@@ -11,6 +12,7 @@ import yaml
 
 from tddf.config_loader import ConfigError, load_config
 from tddf.output import print_run_batch
+from tddf.results import Evidence, RunBatch, RunResult
 from tddf.runner import execute_run
 from tddf.target import build_target_invocation, describe_target, resolve_artifacts_dir
 from tddf.traps import build_document_content, build_html_page
@@ -300,6 +302,7 @@ def test_print_run_batch_includes_capability_visibility(tmp_path: Path) -> None:
                 for scenario in config.scenario_definitions
             },
             artifacts=None,
+            junit_xml=tmp_path / "junit.xml",
         )
     finally:
         output_module.console = original_console
@@ -312,6 +315,7 @@ def test_print_run_batch_includes_capability_visibility(tmp_path: Path) -> None:
     assert "mcp" in rendered
     assert "Required capabilities" in rendered
     assert "hidden-content-exfiltration" in rendered
+    assert "JUnit XML:" in rendered
 
 
 def test_safe_agent_passes() -> None:
@@ -656,6 +660,159 @@ def test_multiple_scenarios_run_and_write_artifacts(tmp_path: Path) -> None:
     assert bundles["confused-deputy-finance-demo"].run_dir.exists()
     for bundle in bundles.values():
         assert bundle.run_dir.parent.name == batch.run_id
+
+
+def test_junit_xml_written_per_run(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path, replacement_target="tests/fixtures/safe_agent.py"
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    junit_xml = batch.write_junit_xml(resolve_artifacts_dir(config, config_path))
+
+    assert junit_xml.exists()
+    assert junit_xml.name == "junit.xml"
+    assert junit_xml.parent.name == batch.run_id
+
+    root = ET.fromstring(junit_xml.read_text())
+    suite = root.find("testsuite")
+    assert suite is not None
+    assert suite.attrib["name"] == "tddf"
+    assert suite.attrib["tests"] == "5"
+    assert suite.attrib["failures"] == "0"
+    assert suite.attrib["errors"] == "0"
+
+    properties = suite.find("properties")
+    assert properties is not None
+    assert {
+        (item.attrib["name"], item.attrib["value"])
+        for item in properties.findall("property")
+    } >= {("run_id", batch.run_id), ("config_path", str(config_path.resolve()))}
+
+    testcases = suite.findall("testcase")
+    assert len(testcases) == 5
+    assert {item.attrib["name"] for item in testcases} == {
+        result.scenario_id for result in batch.results
+    }
+    assert all(item.find("failure") is None for item in testcases)
+    assert all(item.find("error") is None for item in testcases)
+
+
+def test_junit_xml_maps_failed_error_and_timeout_statuses(tmp_path: Path) -> None:
+    batch = RunBatch(
+        run_id="run-junit-demo",
+        config_path=str((tmp_path / "tddf.yaml").resolve()),
+        results=[
+            RunResult(
+                run_id="run-junit-demo",
+                scenario_id="safe-pass",
+                status="passed",
+                trap_id="safe-pass",
+                prompt="safe",
+                target_command=["python", "agent.py"],
+                config_path=str((tmp_path / "tddf.yaml").resolve()),
+                started_at="2026-04-08T00:00:00+00:00",
+                completed_at="2026-04-08T00:00:01+00:00",
+                web_url=None,
+                document_path=None,
+                workspace_path=None,
+                attacker_url="http://attacker.test/collect",
+                summary="Passed safely.",
+                exit_code=0,
+                duration_seconds=1.0,
+            ),
+            RunResult(
+                run_id="run-junit-demo",
+                scenario_id="policy-fail",
+                status="failed",
+                trap_id="policy-fail",
+                prompt="bad",
+                target_command=["python", "agent.py"],
+                config_path=str((tmp_path / "tddf.yaml").resolve()),
+                started_at="2026-04-08T00:00:01+00:00",
+                completed_at="2026-04-08T00:00:02+00:00",
+                web_url=None,
+                document_path=None,
+                workspace_path=None,
+                attacker_url="http://attacker.test/collect",
+                summary="Exfiltration detected.",
+                exit_code=0,
+                duration_seconds=1.0,
+                evidence=[
+                    Evidence(
+                        kind="network_request",
+                        detail="Attacker endpoint contacted.",
+                    )
+                ],
+            ),
+            RunResult(
+                run_id="run-junit-demo",
+                scenario_id="runtime-error",
+                status="error",
+                trap_id="runtime-error",
+                prompt="oops",
+                target_command=["python", "agent.py"],
+                config_path=str((tmp_path / "tddf.yaml").resolve()),
+                started_at="2026-04-08T00:00:02+00:00",
+                completed_at="2026-04-08T00:00:03+00:00",
+                web_url=None,
+                document_path=None,
+                workspace_path=None,
+                attacker_url="http://attacker.test/collect",
+                summary="Target command failed.",
+                exit_code=2,
+                duration_seconds=1.0,
+                stderr="boom\n",
+            ),
+            RunResult(
+                run_id="run-junit-demo",
+                scenario_id="slow-timeout",
+                status="timeout",
+                trap_id="slow-timeout",
+                prompt="slow",
+                target_command=["python", "agent.py"],
+                config_path=str((tmp_path / "tddf.yaml").resolve()),
+                started_at="2026-04-08T00:00:03+00:00",
+                completed_at="2026-04-08T00:00:05+00:00",
+                web_url=None,
+                document_path=None,
+                workspace_path=None,
+                attacker_url="http://attacker.test/collect",
+                summary="Target did not finish before timeout.",
+                exit_code=None,
+                duration_seconds=2.0,
+            ),
+        ],
+    )
+
+    junit_xml = batch.write_junit_xml(tmp_path)
+    root = ET.fromstring(junit_xml.read_text())
+    suite = root.find("testsuite")
+    assert suite is not None
+    assert suite.attrib["tests"] == "4"
+    assert suite.attrib["failures"] == "1"
+    assert suite.attrib["errors"] == "2"
+
+    cases = {case.attrib["name"]: case for case in suite.findall("testcase")}
+    assert cases["safe-pass"].find("failure") is None
+    assert cases["safe-pass"].find("error") is None
+
+    failure = cases["policy-fail"].find("failure")
+    assert failure is not None
+    assert failure.attrib["type"] == "policy_violation"
+    assert "Attacker endpoint contacted." in (failure.text or "")
+
+    error = cases["runtime-error"].find("error")
+    assert error is not None
+    assert error.attrib["type"] == "error"
+    assert "Target command failed." in (error.text or "")
+    assert cases["runtime-error"].find("system-err").text == "boom\n"
+
+    timeout = cases["slow-timeout"].find("error")
+    assert timeout is not None
+    assert timeout.attrib["type"] == "timeout"
+    assert "timeout" in (timeout.text or "").lower()
 
 
 def test_workspace_safe_agent_passes(tmp_path: Path) -> None:

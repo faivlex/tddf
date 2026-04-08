@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
+from xml.etree import ElementTree as ET
 
 
 @dataclass(slots=True)
@@ -72,7 +73,10 @@ class RunResult:
         stderr_txt.write_text(self.stderr)
         if self.adapter_artifact_contents:
             adapter_artifacts_dir.mkdir(parents=True, exist_ok=True)
-            for artifact_name, artifact_content in self.adapter_artifact_contents.items():
+            for (
+                artifact_name,
+                artifact_content,
+            ) in self.adapter_artifact_contents.items():
                 artifact_path = adapter_artifacts_dir / artifact_name
                 artifact_path.write_text(artifact_content)
                 adapter_artifacts[artifact_name] = artifact_path
@@ -102,3 +106,96 @@ class RunBatch:
         if any(status == "timeout" for status in statuses):
             return "timeout"
         return "passed"
+
+    def write_junit_xml(self, artifacts_dir: Path) -> Path:
+        run_dir = artifacts_dir / self.run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        junit_xml = run_dir / "junit.xml"
+
+        tests = len(self.results)
+        failures = sum(1 for result in self.results if result.status == "failed")
+        errors = sum(
+            1 for result in self.results if result.status in {"error", "timeout"}
+        )
+        total_time = sum(result.duration_seconds or 0.0 for result in self.results)
+
+        root = ET.Element("testsuites")
+        suite = ET.SubElement(
+            root,
+            "testsuite",
+            {
+                "name": "tddf",
+                "tests": str(tests),
+                "failures": str(failures),
+                "errors": str(errors),
+                "skipped": "0",
+                "time": f"{total_time:.3f}",
+                "timestamp": self.results[0].started_at if self.results else "",
+            },
+        )
+        properties = ET.SubElement(suite, "properties")
+        ET.SubElement(properties, "property", {"name": "run_id", "value": self.run_id})
+        ET.SubElement(
+            properties,
+            "property",
+            {"name": "config_path", "value": self.config_path},
+        )
+
+        for result in self.results:
+            testcase = ET.SubElement(
+                suite,
+                "testcase",
+                {
+                    "classname": f"tddf.{result.adapter_name}",
+                    "name": result.scenario_id,
+                    "file": result.config_path,
+                    "time": f"{(result.duration_seconds or 0.0):.3f}",
+                },
+            )
+            if result.status == "failed":
+                failure = ET.SubElement(
+                    testcase,
+                    "failure",
+                    {
+                        "message": result.summary or "Scenario failed.",
+                        "type": "policy_violation",
+                    },
+                )
+                failure.text = _build_junit_detail(result)
+            elif result.status in {"error", "timeout"}:
+                error = ET.SubElement(
+                    testcase,
+                    "error",
+                    {
+                        "message": result.summary or "Scenario errored.",
+                        "type": result.status,
+                    },
+                )
+                error.text = _build_junit_detail(result)
+            if result.stdout:
+                system_out = ET.SubElement(testcase, "system-out")
+                system_out.text = result.stdout
+            if result.stderr:
+                system_err = ET.SubElement(testcase, "system-err")
+                system_err.text = result.stderr
+
+        ET.indent(root, space="  ")
+        junit_xml.write_text(
+            ET.tostring(root, encoding="unicode", xml_declaration=True) + "\n"
+        )
+        return junit_xml
+
+
+def _build_junit_detail(result: RunResult) -> str:
+    detail_lines = [
+        f"status: {result.status}",
+        f"summary: {result.summary}",
+        f"adapter: {result.adapter_name}",
+        f"target: {' '.join(result.target_command)}",
+    ]
+    if result.exit_code is not None:
+        detail_lines.append(f"exit_code: {result.exit_code}")
+    if result.evidence:
+        detail_lines.append("evidence:")
+        detail_lines.extend(f"- {item.kind}: {item.detail}" for item in result.evidence)
+    return "\n".join(detail_lines)

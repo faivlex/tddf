@@ -12,6 +12,7 @@ from tddf.config_loader import DEFAULT_CONFIG_PATH, ConfigError, load_config
 from tddf.output import print_run_batch
 from tddf.runner import execute_run
 from tddf.target import describe_target, resolve_artifacts_dir
+from tddf.templates import TemplateAdapter, render_config
 
 
 def _format_capabilities(capabilities: set[str]) -> str:
@@ -41,16 +42,57 @@ def _normalize_for_output(payload: object) -> object:
 
 
 app = typer.Typer(
-    help="TDDF: deterministic agent-trap evaluations for local command targets."
+    help=(
+        "TDDF — test whether your AI agent can be tricked into leaking data.\n\n"
+        "Hosts trap content locally, runs your agent against it, and checks "
+        "for exfiltration attempts and sensitive tool access. "
+        "Pass/fail is deterministic: no LLM-as-judge."
+    ),
+    epilog=(
+        "Examples:\n"
+        "  tddf init --adapter command\n"
+        "  tddf validate --config tddf.yaml\n"
+        "  tddf run --config tddf.yaml\n\n"
+        "Docs: https://github.com/your-org/tddf"
+    ),
+    no_args_is_help=True,
+    pretty_exceptions_show_locals=False,
 )
 console = Console()
+
+
+@app.command()
+def init(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config"),
+    adapter: TemplateAdapter = typer.Option(TemplateAdapter.COMMAND, "--adapter"),
+    force: bool = typer.Option(
+        False, "--force", help="Overwrite an existing config file."
+    ),
+) -> None:
+    """Generate a starter config file for a target adapter (command, hermes, openclaw)."""
+    resolved_config = config.resolve()
+    if resolved_config.exists() and not force:
+        console.print(
+            f"[red]Refusing to overwrite existing config:[/red] {resolved_config}"
+        )
+        console.print("Re-run with [bold]--force[/bold] to overwrite it.")
+        raise typer.Exit(code=1)
+
+    resolved_config.parent.mkdir(parents=True, exist_ok=True)
+    resolved_config.write_text(render_config(adapter))
+    console.print(
+        f"[green]Wrote starter config[/green] for adapter [bold]{adapter.value}[/bold]: {resolved_config}"
+    )
+    console.print("Next steps:")
+    console.print(f"1. tddf validate --config {resolved_config}")
+    console.print(f"2. tddf run --config {resolved_config}")
 
 
 @app.command()
 def validate(
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
 ) -> None:
-    """Validate a TDDF configuration file."""
+    """Check config shape, target capabilities, and scenario compatibility."""
     try:
         loaded = load_config(config)
     except ConfigError as error:
@@ -91,7 +133,7 @@ def validate(
 def run(
     config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
 ) -> None:
-    """Execute a deterministic TDDF evaluation."""
+    """Run all trap scenarios against your agent and report pass/fail results."""
     try:
         loaded = load_config(config)
     except ConfigError as error:
@@ -109,9 +151,13 @@ def run(
         if loaded.output.write_json
         else None
     )
+    junit_xml = (
+        batch.write_junit_xml(artifacts_dir) if loaded.output.write_junit else None
+    )
     print_run_batch(
         batch,
         artifacts=artifacts,
+        junit_xml=junit_xml,
         target_capabilities=loaded.target_capabilities,
         harness_capabilities=loaded.harness_capabilities,
         scenario_requirements={

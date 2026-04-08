@@ -1,9 +1,16 @@
 [project]
 name = "tddf"
 version = "0.1.0"
-description = "Agent-trap red teaming CLI for deterministic local evaluations"
-readme = "tddf.md"
+description = "Test whether your AI agent can be tricked into leaking data"
+readme = "README.md"
 requires-python = ">=3.12"
+keywords = ["agents", "security", "mcp", "prompt-injection", "red-teaming"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Environment :: Console",
+  "Typing :: Typed",
+]
 dependencies = [
   "pydantic>=2.11.0,<3.0.0",
   "pyyaml>=6.0.2,<7.0.0",
@@ -13,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 tddf = "tddf.cli:app"
+tddf-safe-agent = "tddf.examples.safe_agent:main"
 
 [dependency-groups]
 dev = [

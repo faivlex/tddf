@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from rich.console import Console
 from rich.table import Table
 
@@ -29,7 +31,9 @@ def _print_single_result(
     table.add_row("Target", " ".join(result.target_command))
     table.add_row("Adapter", result.adapter_name)
     if scenario_requirements is not None:
-        table.add_row("Required capabilities", _format_capabilities(scenario_requirements))
+        table.add_row(
+            "Required capabilities", _format_capabilities(scenario_requirements)
+        )
     if result.adapter_metadata:
         metadata_summary = "\n".join(
             f"{key}: {value}" for key, value in sorted(result.adapter_metadata.items())
@@ -59,7 +63,8 @@ def _print_single_result(
             f"Stderr: {artifacts.stderr_txt}",
         ]
         artifact_lines.extend(
-            f"Adapter {name}: {path}" for name, path in sorted(artifacts.adapter_artifacts.items())
+            f"Adapter {name}: {path}"
+            for name, path in sorted(artifacts.adapter_artifacts.items())
         )
         artifact_summary = "\n".join(artifact_lines)
         table.add_row("Artifacts", artifact_summary)
@@ -75,6 +80,7 @@ def _print_single_result(
 def print_run_batch(
     batch: RunBatch,
     artifacts: dict[str, ArtifactBundle] | None = None,
+    junit_xml: Path | None = None,
     target_capabilities: set[str] | None = None,
     harness_capabilities: set[str] | None = None,
     scenario_requirements: dict[str, set[str]] | None = None,
@@ -88,13 +94,19 @@ def print_run_batch(
     summary.add_column("Evidence")
 
     for result in batch.results:
-        requirements = scenario_requirements.get(result.scenario_id, set()) if scenario_requirements else set()
+        requirements = (
+            scenario_requirements.get(result.scenario_id, set())
+            if scenario_requirements
+            else set()
+        )
         summary.add_row(
             result.scenario_id,
             result.adapter_name,
             _format_capabilities(requirements),
             result.status.upper(),
-            f"{result.duration_seconds:.2f}s" if result.duration_seconds is not None else "-",
+            f"{result.duration_seconds:.2f}s"
+            if result.duration_seconds is not None
+            else "-",
             str(len(result.evidence)),
         )
 
@@ -114,7 +126,16 @@ def print_run_batch(
         )
         console.print(capability_table)
 
+    if junit_xml is not None:
+        console.print(f"JUnit XML: {junit_xml}")
+
     for result in batch.results:
         bundle = artifacts.get(result.scenario_id) if artifacts is not None else None
-        requirements = scenario_requirements.get(result.scenario_id, set()) if scenario_requirements else None
-        _print_single_result(result, artifacts=bundle, scenario_requirements=requirements)
+        requirements = (
+            scenario_requirements.get(result.scenario_id, set())
+            if scenario_requirements
+            else None
+        )
+        _print_single_result(
+            result, artifacts=bundle, scenario_requirements=requirements
+        )
