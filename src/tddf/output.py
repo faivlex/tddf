@@ -73,6 +73,13 @@ def _print_single_result(
             f"- {item.kind}: {item.detail}" for item in result.evidence
         )
         table.add_row("Evidence", evidence_summary)
+    if result.step_evidence:
+        step_lines = []
+        for step in result.step_evidence:
+            label = step.step_label or f"step-{step.step_index}"
+            step_lines.append(f"[{step.step_index}] {label}: {len(step.evidence)} evidence items")
+            step_lines.extend(f"  - {item.kind}: {item.detail}" for item in step.evidence)
+        table.add_row("Step Evidence", "\n".join(step_lines))
 
     console.print(table)
 
@@ -85,10 +92,14 @@ def print_run_batch(
     harness_capabilities: set[str] | None = None,
     scenario_requirements: dict[str, set[str]] | None = None,
 ) -> None:
+    has_multi_turn = any(result.step_evidence for result in batch.results)
+
     summary = Table(title="TDDF Run Summary")
     summary.add_column("Scenario", style="bold cyan")
     summary.add_column("Adapter")
     summary.add_column("Required")
+    if has_multi_turn:
+        summary.add_column("Steps")
     summary.add_column("Status")
     summary.add_column("Duration")
     summary.add_column("Evidence")
@@ -99,16 +110,21 @@ def print_run_batch(
             if scenario_requirements
             else set()
         )
-        summary.add_row(
+        row = [
             result.scenario_id,
             result.adapter_name,
             _format_capabilities(requirements),
+        ]
+        if has_multi_turn:
+            row.append(str(len(result.step_evidence)) if result.step_evidence else "1")
+        row.extend([
             result.status.upper(),
             f"{result.duration_seconds:.2f}s"
             if result.duration_seconds is not None
             else "-",
             str(len(result.evidence)),
-        )
+        ])
+        summary.add_row(*row)
 
     console.print(summary)
 

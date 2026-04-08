@@ -51,7 +51,12 @@ def _copy_tree_if_exists(source: Path, destination: Path) -> None:
         shutil.copy2(source, destination)
 
 
-def _build_hermes_command(target: HermesTargetConfig, prompt: str) -> list[str]:
+def _build_hermes_command(
+    target: HermesTargetConfig,
+    prompt: str,
+    session_id: str | None = None,
+    step_index: int = 0,
+) -> list[str]:
     command = [*target.hermes.command_prefix, "chat", "-q", prompt]
     if target.hermes.toolsets:
         command.extend(["--toolsets", ",".join(target.hermes.toolsets)])
@@ -61,17 +66,26 @@ def _build_hermes_command(target: HermesTargetConfig, prompt: str) -> list[str]:
         command.extend(["--model", target.hermes.model])
     if target.hermes.provider:
         command.extend(["--provider", target.hermes.provider])
+    if session_id is not None and step_index > 0:
+        command.append("--continue")
     command.extend(target.hermes.extra_args)
     return command
 
 
-def _build_openclaw_command(target: OpenClawTargetConfig, prompt: str) -> list[str]:
+def _build_openclaw_command(
+    target: OpenClawTargetConfig,
+    prompt: str,
+    session_id: str | None = None,
+    step_index: int = 0,
+) -> list[str]:
     command = [*target.openclaw.command_prefix, "agent", "--message", prompt]
     if target.openclaw.local:
         command.append("--local")
     command.append("--json")
     if target.openclaw.agent:
         command.extend(["--agent", target.openclaw.agent])
+    if session_id is not None:
+        command.extend(["--session-id", session_id])
     if target.openclaw.thinking:
         command.extend(["--thinking", target.openclaw.thinking])
     if target.openclaw.verbose:
@@ -244,6 +258,54 @@ def _maybe_prepare_openclaw_home(
     return env, cleanup_dirs, metadata, artifact_contents
 
 
+@dataclass(slots=True)
+class AdapterHome:
+    env: dict[str, str]
+    cleanup_dirs: list[TemporaryDirectory[str]]
+    adapter_name: str
+    adapter_metadata: dict[str, object]
+    adapter_artifact_contents: dict[str, str]
+
+
+def prepare_adapter_home(
+    config: TddfConfig,
+    config_path: Path,
+    mcp_url: str | None,
+    workspace_path: Path | None = None,
+) -> AdapterHome:
+    cwd = resolve_target_cwd(config, config_path)
+    if isinstance(config.target, CommandTargetConfig):
+        return AdapterHome(
+            env={},
+            cleanup_dirs=[],
+            adapter_name="command",
+            adapter_metadata={"kind": "command"},
+            adapter_artifact_contents={},
+        )
+    if isinstance(config.target, HermesTargetConfig):
+        hermes_env, cleanup_dirs, metadata, artifacts = _maybe_prepare_hermes_home(
+            config, mcp_url
+        )
+        return AdapterHome(
+            env=hermes_env,
+            cleanup_dirs=cleanup_dirs,
+            adapter_name="hermes",
+            adapter_metadata=metadata,
+            adapter_artifact_contents=artifacts,
+        )
+    openclaw_env, cleanup_dirs, metadata, artifacts = _maybe_prepare_openclaw_home(
+        config, mcp_url, cwd, workspace_path
+    )
+    metadata.setdefault("config_present", False)
+    return AdapterHome(
+        env=openclaw_env,
+        cleanup_dirs=cleanup_dirs,
+        adapter_name="openclaw",
+        adapter_metadata=metadata,
+        adapter_artifact_contents=artifacts,
+    )
+
+
 def build_target_invocation(
     config: TddfConfig,
     config_path: Path,
@@ -256,6 +318,9 @@ def build_target_invocation(
     deputy_secret_env_key: str | None,
     deputy_secret_env_value: str | None,
     workspace_path: Path | None = None,
+    session_id: str | None = None,
+    step_index: int = 0,
+    adapter_home: AdapterHome | None = None,
 ) -> TargetInvocation:
     env = os.environ.copy()
     cwd = resolve_target_cwd(config, config_path)
@@ -273,42 +338,32 @@ def build_target_invocation(
             workspace_path,
         )
     )
-    cleanup_dirs: list[TemporaryDirectory[str]] = []
-    adapter_name = "command"
-    adapter_metadata: dict[str, object] = {"kind": "command"}
-    adapter_artifact_contents: dict[str, str] = {}
+
+    if session_id is not None:
+        env["TDDF_SESSION_ID"] = session_id
+        env["TDDF_STEP_INDEX"] = str(step_index)
+
+    if adapter_home is None:
+        adapter_home = prepare_adapter_home(config, config_path, mcp_url, workspace_path)
+
+    env.update(adapter_home.env)
+    cleanup_dirs = list(adapter_home.cleanup_dirs)
 
     if isinstance(config.target, CommandTargetConfig):
         command = config.target.command
     elif isinstance(config.target, HermesTargetConfig):
-        adapter_name = "hermes"
-        hermes_env, hermes_cleanup_dirs, adapter_metadata, adapter_artifact_contents = (
-            _maybe_prepare_hermes_home(config, mcp_url)
-        )
-        env.update(hermes_env)
-        cleanup_dirs.extend(hermes_cleanup_dirs)
-        command = _build_hermes_command(config.target, prompt)
+        command = _build_hermes_command(config.target, prompt, session_id, step_index)
     else:
-        adapter_name = "openclaw"
-        (
-            openclaw_env,
-            openclaw_cleanup_dirs,
-            adapter_metadata,
-            adapter_artifact_contents,
-        ) = _maybe_prepare_openclaw_home(config, mcp_url, cwd, workspace_path)
-        env.update(openclaw_env)
-        cleanup_dirs.extend(openclaw_cleanup_dirs)
-        adapter_metadata.setdefault("config_present", False)
-        command = _build_openclaw_command(config.target, prompt)
+        command = _build_openclaw_command(config.target, prompt, session_id, step_index)
 
     return TargetInvocation(
         command=command,
         cwd=cwd,
         env=env,
         cleanup_dirs=cleanup_dirs,
-        adapter_name=adapter_name,
-        adapter_metadata=adapter_metadata,
-        adapter_artifact_contents=adapter_artifact_contents,
+        adapter_name=adapter_home.adapter_name,
+        adapter_metadata=adapter_home.adapter_metadata,
+        adapter_artifact_contents=adapter_home.adapter_artifact_contents,
     )
 
 

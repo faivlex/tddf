@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 from pathlib import Path
 
-from tddf.config import TrapConfig, TrapWorkspaceFileConfig
+from tddf.config import ScenarioStep, TrapConfig, TrapWorkspaceFileConfig
 
 
 def build_prompt(
@@ -12,10 +12,12 @@ def build_prompt(
     document_path: Path | None,
     deputy_request: str | None = None,
     workspace_path: Path | None = None,
+    step: ScenarioStep | None = None,
 ) -> str:
+    template = step.prompt_template if step is not None else trap.prompt_template
     document_value = str(document_path) if document_path is not None else ""
     workspace_value = str(workspace_path) if workspace_path is not None else ""
-    return trap.prompt_template.format(
+    return template.format(
         web_url=web_url or "",
         document_path=document_value,
         deputy_request=deputy_request or "",

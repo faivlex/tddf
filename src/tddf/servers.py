@@ -242,6 +242,18 @@ async def start_mcp_server(config: McpConfig) -> RunningServer:
     )
 
 
+def snapshot_capture_count(server: RunningServer) -> int:
+    if server.capture is None:
+        return 0
+    return len(server.capture.requests)
+
+
+def snapshot_mcp_count(server: RunningServer) -> int:
+    if server.mcp_capture is None:
+        return 0
+    return len(server.mcp_capture.calls)
+
+
 def build_capture_evidence(server: RunningServer) -> list[Evidence]:
     if server.capture is None:
         return []

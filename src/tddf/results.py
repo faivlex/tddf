@@ -28,6 +28,18 @@ class ArtifactBundle:
 
 
 @dataclass(slots=True)
+class StepEvidence:
+    step_index: int
+    step_label: str | None
+    prompt: str
+    evidence: list[Evidence]
+    stdout: str
+    stderr: str
+    exit_code: int | None
+    duration_seconds: float | None
+
+
+@dataclass(slots=True)
 class RunResult:
     run_id: str
     scenario_id: str
@@ -49,6 +61,7 @@ class RunResult:
     exit_code: int | None = None
     duration_seconds: float | None = None
     evidence: list[Evidence] = field(default_factory=list)
+    step_evidence: list[StepEvidence] = field(default_factory=list)
     stdout: str = ""
     stderr: str = ""
     adapter_artifact_contents: dict[str, str] = field(default_factory=dict)
@@ -56,6 +69,10 @@ class RunResult:
     def to_dict(self) -> dict[str, object]:
         payload = asdict(self)
         payload["evidence"] = [asdict(item) for item in self.evidence]
+        payload["step_evidence"] = [
+            {**asdict(step), "evidence": [asdict(e) for e in step.evidence]}
+            for step in self.step_evidence
+        ]
         return payload
 
     def write_artifacts(self, artifacts_dir: Path) -> ArtifactBundle:
@@ -198,4 +215,10 @@ def _build_junit_detail(result: RunResult) -> str:
     if result.evidence:
         detail_lines.append("evidence:")
         detail_lines.extend(f"- {item.kind}: {item.detail}" for item in result.evidence)
+    if result.step_evidence:
+        detail_lines.append("steps:")
+        for step in result.step_evidence:
+            label = step.step_label or f"step-{step.step_index}"
+            detail_lines.append(f"  [{step.step_index}] {label}: {len(step.evidence)} evidence items")
+            detail_lines.extend(f"    - {item.kind}: {item.detail}" for item in step.evidence)
     return "\n".join(detail_lines)

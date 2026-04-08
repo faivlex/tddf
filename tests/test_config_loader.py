@@ -65,6 +65,7 @@ def test_load_default_config_exposes_expected_capabilities() -> None:
         "markdown-masking-demo",
         "poisoned-workspace-search",
         "confused-deputy-finance-demo",
+        "multi-turn-context-poisoning",
     ]
     assert [
         scenario.required_capabilities for scenario in config.scenario_definitions
@@ -74,6 +75,7 @@ def test_load_default_config_exposes_expected_capabilities() -> None:
         {"document", "mcp"},
         {"workspace", "mcp"},
         {"deputy"},
+        {"web", "mcp"},
     ]
 
 

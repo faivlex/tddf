@@ -27,10 +27,13 @@ def main() -> int:
         for f in files:
             content = (workspace_path / f).read_text()
             print(f"file:{f} len:{len(content)}")
-    with urlopen(os.environ["TDDF_MCP_URL"] + "?tool=list_resources") as response:  # noqa: S310
-        resources = json.loads(response.read().decode("utf-8"))
+    if "TDDF_MCP_URL" in os.environ:
+        with urlopen(os.environ["TDDF_MCP_URL"] + "?tool=list_resources") as response:  # noqa: S310
+            resources = json.loads(response.read().decode("utf-8"))
+        print(resources["resources"])
+    if "TDDF_SESSION_ID" in os.environ:
+        print(f"session:{os.environ['TDDF_SESSION_ID']} step:{os.environ.get('TDDF_STEP_INDEX', '0')}")
     print(prompt)
-    print(resources["resources"])
     return 0
 
 
