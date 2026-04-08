@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sys
 import xml.etree.ElementTree as ET
 from io import StringIO
 from pathlib import Path
@@ -52,6 +53,20 @@ OPENCLAW_TARGET = {
         "use_temp_home": True,
         "base_home_dir": str(OPENCLAW_BASE_HOME),
         "inject_mcp_config": True,
+    },
+}
+
+
+LANGGRAPH_TARGET = {
+    "kind": "langgraph",
+    "cwd": str(ROOT),
+    "env": {},
+    "langgraph": {
+        "graph": "tests.fixtures.mock_langgraph:safe_graph",
+        "capabilities": ["web", "workspace", "mcp"],
+        "input_mode": "messages",
+        "stream_modes": ["values", "updates", "custom"],
+        "use_thread_id": True,
     },
 }
 
@@ -206,6 +221,56 @@ def test_openclaw_target_invocation_builds_expected_command_and_home(
         cleanup_dir.cleanup()
 
 
+def test_langgraph_target_invocation_builds_expected_command(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **LANGGRAPH_TARGET,
+                    "env": {"FOO": "bar"},
+                    "langgraph": {
+                        **LANGGRAPH_TARGET["langgraph"],
+                        "configurable": {"user_id": "demo-user"},
+                        "context": {"deployment": "test"},
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    invocation = build_target_invocation(
+        config,
+        config_path,
+        prompt="hello from langgraph",
+        web_url="http://example.test/article",
+        attacker_url="http://example.test/collect",
+        mcp_url="http://example.test/mcp",
+        document_path=None,
+        deputy_workspace_dir=None,
+        deputy_secret_env_key=None,
+        deputy_secret_env_value=None,
+        session_id="session-123",
+        step_index=1,
+    )
+
+    assert Path(invocation.command[0]).name == Path(sys.executable).name
+    assert invocation.command[1:3] == ["-m", "tddf.langgraph_runner"]
+    assert "--graph" in invocation.command
+    assert "tests.fixtures.mock_langgraph:safe_graph" in invocation.command
+    assert invocation.cwd == ROOT
+    assert invocation.env["FOO"] == "bar"
+    assert invocation.env["TDDF_SESSION_ID"] == "session-123"
+    assert invocation.env["TDDF_STEP_INDEX"] == "1"
+    assert invocation.adapter_name == "langgraph"
+    assert (
+        invocation.adapter_metadata["graph"]
+        == "tests.fixtures.mock_langgraph:safe_graph"
+    )
+
+
 def test_incompatible_hermes_config_fails_fast_before_execution(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -284,6 +349,17 @@ def test_describe_target_uses_generalized_adapter_contract(tmp_path: Path) -> No
     assert (
         describe_target(openclaw_config)
         == "python tests/fixtures/mock_openclaw.py agent --message <prompt> --local --json --agent ops --thinking medium --verbose on --timeout 45 --deliver"
+    )
+
+    langgraph_config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update({"target": LANGGRAPH_TARGET}),
+    )
+    langgraph_config = load_config(langgraph_config_path)
+    assert (
+        describe_target(langgraph_config)
+        == "langgraph:tests.fixtures.mock_langgraph:safe_graph"
     )
 
 
@@ -475,6 +551,84 @@ def test_mock_openclaw_target_passes(tmp_path: Path) -> None:
     assert len(multi_turn[0].step_evidence) == 2
 
 
+def test_mock_langgraph_target_passes(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration", "poisoned-workspace-search"],
+        transform=lambda raw: raw.update({"target": LANGGRAPH_TARGET}),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+
+    assert batch.status == "passed"
+    assert len(batch.results) == 2
+    assert all(result.status == "passed" for result in batch.results)
+    assert all(result.adapter_name == "langgraph" for result in batch.results)
+    assert all(
+        result.adapter_metadata["trace_captured"] is True for result in batch.results
+    )
+    assert all(
+        "langgraph_trace.json" in result.adapter_artifact_contents
+        for result in batch.results
+    )
+
+
+def test_mock_langgraph_target_fails_on_exfiltration(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **LANGGRAPH_TARGET,
+                    "langgraph": {
+                        **LANGGRAPH_TARGET["langgraph"],
+                        "graph": "tests.fixtures.mock_langgraph:exfil_graph",
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert batch.status == "failed"
+    assert result.status == "failed"
+    assert result.adapter_name == "langgraph"
+    assert any(item.kind == "network_request" for item in result.evidence)
+
+
+def test_langgraph_multi_turn_uses_thread_id(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["multi-turn-context-poisoning"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **LANGGRAPH_TARGET,
+                    "langgraph": {
+                        **LANGGRAPH_TARGET["langgraph"],
+                        "graph": "tests.fixtures.mock_langgraph:build_safe_graph",
+                        "capabilities": ["web", "mcp"],
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert result.status == "passed"
+    assert result.adapter_metadata["thread_id"]
+    trace_payload = json.loads(result.adapter_artifact_contents["langgraph_trace.json"])
+    assert trace_payload["thread_id"] == result.adapter_metadata["thread_id"]
+
+
 def test_hermes_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -529,6 +683,33 @@ def test_openclaw_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
     assert result_payload["adapter_name"] == "openclaw"
     assert result_payload["adapter_metadata"]["json_captured"] is True
     assert "openclaw_result.json" in result_payload["adapter_artifact_contents"]
+
+
+def test_langgraph_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update({"target": LANGGRAPH_TARGET}),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+    bundle = result.write_artifacts(resolve_artifacts_dir(config, config_path))
+
+    assert result.adapter_name == "langgraph"
+    assert bundle.adapter_artifacts["langgraph_trace.json"].exists()
+
+    trace_payload = json.loads(
+        bundle.adapter_artifacts["langgraph_trace.json"].read_text()
+    )
+    assert trace_payload["graph"] == "tests.fixtures.mock_langgraph:safe_graph"
+    assert trace_payload["used_streaming"] is True
+
+    result_payload = json.loads(bundle.result_json.read_text())
+    assert result_payload["adapter_name"] == "langgraph"
+    assert result_payload["adapter_metadata"]["trace_captured"] is True
+    assert "langgraph_trace.json" in result_payload["adapter_artifact_contents"]
 
 
 def test_exfil_agent_fails(tmp_path: Path) -> None:

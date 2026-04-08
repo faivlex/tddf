@@ -84,7 +84,7 @@ See `tddf-composed.yaml` for a full working example. Encoding strategies (base64
 
 ## Adapters
 
-TDDF works with any agent that can be invoked as a subprocess. Three adapters are built in:
+TDDF works with any agent that can be invoked as a subprocess. Four adapters are built in:
 
 **command** — Run any script or binary. TDDF passes the prompt and server URLs via environment variables (`TDDF_PROMPT`, `TDDF_WEB_URL`, `TDDF_ATTACKER_URL`, `TDDF_MCP_URL`, etc.). This is the simplest integration path and works for any language or framework.
 
@@ -102,6 +102,19 @@ tddf init --adapter hermes --config tddf-hermes.yaml
 
 ```bash
 tddf init --adapter openclaw --config tddf-openclaw.yaml
+```
+
+**langgraph** — Run [LangGraph](https://github.com/langchain-ai/langgraph) graphs and functional API entrypoints via their `stream`/`invoke` interface. Captures stream parts as artifacts and uses `thread_id` for multi-turn continuity. LangGraph is an optional dependency — TDDF runs it in a helper process so it doesn't need to be installed globally.
+
+```yaml
+# tddf-langgraph.yaml
+target:
+  kind: langgraph
+  langgraph:
+    graph: my_app.agent:graph
+    input_mode: messages
+    stream_modes: [values, updates]
+    use_thread_id: true
 ```
 
 ## Install

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,6 +13,7 @@ import yaml
 from tddf.config import (
     CommandTargetConfig,
     HermesTargetConfig,
+    LangGraphTargetConfig,
     OpenClawTargetConfig,
     TddfConfig,
 )
@@ -93,6 +95,48 @@ def _build_openclaw_command(
     if target.openclaw.timeout_seconds is not None:
         command.extend(["--timeout", str(target.openclaw.timeout_seconds)])
     command.extend(target.openclaw.extra_args)
+    return command
+
+
+def _normalize_for_json(payload: object) -> object:
+    if isinstance(payload, Path):
+        return str(payload)
+    if isinstance(payload, dict):
+        return {str(key): _normalize_for_json(value) for key, value in payload.items()}
+    if isinstance(payload, list):
+        return [_normalize_for_json(item) for item in payload]
+    return payload
+
+
+def _build_langgraph_command(target: LangGraphTargetConfig) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "tddf.langgraph_runner",
+        "--graph",
+        target.langgraph.graph,
+        "--input-mode",
+        target.langgraph.input_mode,
+        "--stream-modes",
+        ",".join(target.langgraph.stream_modes),
+        "--configurable",
+        json.dumps(_normalize_for_json(target.langgraph.configurable), sort_keys=True),
+        "--context",
+        json.dumps(_normalize_for_json(target.langgraph.context), sort_keys=True),
+    ]
+    if target.langgraph.input_template is not None:
+        command.extend(
+            [
+                "--input-template",
+                json.dumps(
+                    _normalize_for_json(target.langgraph.input_template),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+    if target.langgraph.use_thread_id:
+        command.append("--use-thread-id")
     return command
 
 
@@ -282,6 +326,20 @@ def prepare_adapter_home(
             adapter_metadata={"kind": "command"},
             adapter_artifact_contents={},
         )
+    if isinstance(config.target, LangGraphTargetConfig):
+        return AdapterHome(
+            env={},
+            cleanup_dirs=[],
+            adapter_name="langgraph",
+            adapter_metadata={
+                "kind": "langgraph",
+                "graph": config.target.langgraph.graph,
+                "input_mode": config.target.langgraph.input_mode,
+                "stream_modes": list(config.target.langgraph.stream_modes),
+                "use_thread_id": config.target.langgraph.use_thread_id,
+            },
+            adapter_artifact_contents={},
+        )
     if isinstance(config.target, HermesTargetConfig):
         hermes_env, cleanup_dirs, metadata, artifacts = _maybe_prepare_hermes_home(
             config, mcp_url
@@ -344,13 +402,17 @@ def build_target_invocation(
         env["TDDF_STEP_INDEX"] = str(step_index)
 
     if adapter_home is None:
-        adapter_home = prepare_adapter_home(config, config_path, mcp_url, workspace_path)
+        adapter_home = prepare_adapter_home(
+            config, config_path, mcp_url, workspace_path
+        )
 
     env.update(adapter_home.env)
     cleanup_dirs = list(adapter_home.cleanup_dirs)
 
     if isinstance(config.target, CommandTargetConfig):
         command = config.target.command
+    elif isinstance(config.target, LangGraphTargetConfig):
+        command = _build_langgraph_command(config.target)
     elif isinstance(config.target, HermesTargetConfig):
         command = _build_hermes_command(config.target, prompt, session_id, step_index)
     else:
@@ -387,6 +449,12 @@ def _extract_hermes_trace(stdout: str) -> tuple[dict[str, object] | None, str | 
     return _extract_trace(stdout, "TDDF_HERMES_TRACE=")
 
 
+def _extract_langgraph_trace(
+    stdout: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    return _extract_trace(stdout, "TDDF_LANGGRAPH_TRACE=")
+
+
 def _extract_openclaw_result(
     stdout: str,
 ) -> tuple[dict[str, object] | None, str | None]:
@@ -421,6 +489,22 @@ def collect_adapter_observability(
             adapter_artifact_contents["hermes_trace.json"] = (
                 json.dumps(trace_payload, indent=2) + "\n"
             )
+    elif invocation.adapter_name == "langgraph":
+        trace_payload, trace_error = _extract_langgraph_trace(stdout)
+        adapter_metadata["stdout_line_count"] = len(stdout.splitlines())
+        adapter_metadata["stderr_line_count"] = len(stderr.splitlines())
+        adapter_metadata["trace_captured"] = trace_payload is not None
+        if trace_error is not None:
+            adapter_metadata["trace_parse_error"] = trace_error
+        if trace_payload is not None:
+            adapter_metadata["stream_part_count"] = trace_payload.get(
+                "stream_part_count"
+            )
+            adapter_metadata["used_streaming"] = trace_payload.get("used_streaming")
+            adapter_metadata["thread_id"] = trace_payload.get("thread_id")
+            adapter_artifact_contents["langgraph_trace.json"] = (
+                json.dumps(trace_payload, indent=2) + "\n"
+            )
     elif invocation.adapter_name == "openclaw":
         result_payload, result_error = _extract_openclaw_result(stdout)
         adapter_metadata["stdout_line_count"] = len(stdout.splitlines())
@@ -452,6 +536,8 @@ def collect_adapter_observability(
 def describe_target(config: TddfConfig) -> str:
     if isinstance(config.target, CommandTargetConfig):
         return " ".join(config.target.command)
+    if isinstance(config.target, LangGraphTargetConfig):
+        return f"langgraph:{config.target.langgraph.graph}"
     if isinstance(config.target, HermesTargetConfig):
         return " ".join(
             config.target.hermes.command_prefix + ["chat", "-q", "<prompt>"]

@@ -148,6 +148,14 @@ def validate(
         ).strip()
         console.print("[green]OpenClaw options:[/green]")
         console.print(openclaw_payload)
+    if loaded.target.kind == "langgraph":
+        langgraph_payload = yaml.safe_dump(
+            _normalize_for_output(loaded.target.langgraph.model_dump(mode="python")),
+            sort_keys=False,
+            allow_unicode=True,
+        ).strip()
+        console.print("[green]LangGraph options:[/green]")
+        console.print(langgraph_payload)
 
 
 @import_app.command("injecagent")

@@ -39,6 +39,20 @@ OPENCLAW_TARGET = {
 }
 
 
+LANGGRAPH_TARGET = {
+    "kind": "langgraph",
+    "cwd": str(ROOT),
+    "env": {},
+    "langgraph": {
+        "graph": "tests.fixtures.mock_langgraph:safe_graph",
+        "capabilities": ["web", "workspace", "mcp"],
+        "input_mode": "messages",
+        "stream_modes": ["values", "updates", "custom"],
+        "use_thread_id": True,
+    },
+}
+
+
 def _write_config(
     tmp_path: Path, raw: dict[str, object], name: str = "tddf.yaml"
 ) -> Path:
@@ -169,6 +183,34 @@ def test_load_config_accepts_mcp_capable_openclaw_target(tmp_path: Path) -> None
         "workspace",
         "mcp",
     }
+
+
+def test_load_config_accepts_langgraph_target(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("tddf.yaml").read_text())
+    raw["target"] = LANGGRAPH_TARGET
+    raw["scenarios"] = [raw["scenarios"][0], raw["scenarios"][3]]
+    config_path = _write_config(tmp_path, raw, "langgraph.yaml")
+
+    config = load_config(config_path)
+
+    assert config.target.kind == "langgraph"
+    assert config.target_capabilities == {"web", "workspace", "mcp"}
+
+
+def test_load_config_rejects_invalid_langgraph_graph_reference(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("tddf.yaml").read_text())
+    raw["target"] = {
+        "kind": "langgraph",
+        "cwd": str(ROOT),
+        "env": {},
+        "langgraph": {
+            "graph": "tests.fixtures.mock_langgraph",
+        },
+    }
+    config_path = _write_config(tmp_path, raw, "invalid-langgraph.yaml")
+
+    with pytest.raises(ConfigError, match="module.path:object_name"):
+        load_config(config_path)
 
 
 def test_mcp_required_scenario_rejects_disabled_harness(tmp_path: Path) -> None:

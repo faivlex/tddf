@@ -9,6 +9,8 @@ from tddf.compliance import default_frameworks_for_family, validate_framework_re
 
 
 AdapterCapability = Literal["web", "document", "deputy", "workspace", "mcp"]
+LangGraphInputMode = Literal["messages", "prompt"]
+LangGraphStreamMode = Literal["values", "updates", "messages", "custom"]
 TrapFamilyKind = Literal[
     "content_injection",
     "behavioural_control",
@@ -163,8 +165,49 @@ class OpenClawTargetConfig(BaseModel):
     openclaw: OpenClawOptionsConfig = Field(default_factory=OpenClawOptionsConfig)
 
 
+class LangGraphOptionsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    graph: str
+    capabilities: list[AdapterCapability] = Field(
+        default_factory=lambda: ["web", "document", "deputy", "workspace", "mcp"]
+    )
+    input_mode: LangGraphInputMode = "messages"
+    input_template: object | None = None
+    configurable: dict[str, object] = Field(default_factory=dict)
+    context: dict[str, object] = Field(default_factory=dict)
+    stream_modes: list[LangGraphStreamMode] = Field(
+        default_factory=lambda: ["values", "updates", "messages", "custom"]
+    )
+    use_thread_id: bool = True
+
+    @model_validator(mode="after")
+    def validate_options(self) -> "LangGraphOptionsConfig":
+        if ":" not in self.graph:
+            raise ValueError(
+                "LangGraph target 'graph' must use the format 'module.path:object_name'."
+            )
+        if len(self.capabilities) != len(set(self.capabilities)):
+            raise ValueError("LangGraph capabilities must be unique.")
+        if len(self.stream_modes) != len(set(self.stream_modes)):
+            raise ValueError("LangGraph stream_modes must be unique.")
+        return self
+
+
+class LangGraphTargetConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["langgraph"] = "langgraph"
+    cwd: Path | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    langgraph: LangGraphOptionsConfig
+
+
 TargetConfig = Annotated[
-    CommandTargetConfig | HermesTargetConfig | OpenClawTargetConfig,
+    CommandTargetConfig
+    | HermesTargetConfig
+    | OpenClawTargetConfig
+    | LangGraphTargetConfig,
     Field(discriminator="kind"),
 ]
 
@@ -186,6 +229,9 @@ def _capabilities_from_hermes_toolsets(toolsets: set[str]) -> set[AdapterCapabil
 def get_target_capabilities(target: TargetConfig) -> set[AdapterCapability]:
     if isinstance(target, CommandTargetConfig):
         return {"web", "document", "deputy", "workspace", "mcp"}
+
+    if isinstance(target, LangGraphTargetConfig):
+        return set(target.langgraph.capabilities)
 
     if isinstance(target, OpenClawTargetConfig):
         capabilities: set[AdapterCapability] = {
