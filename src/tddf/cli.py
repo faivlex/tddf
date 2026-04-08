@@ -156,6 +156,16 @@ def validate(
         ).strip()
         console.print("[green]LangGraph options:[/green]")
         console.print(langgraph_payload)
+    if loaded.target.kind == "openai_agents":
+        openai_agents_payload = yaml.safe_dump(
+            _normalize_for_output(
+                loaded.target.openai_agents.model_dump(mode="python")
+            ),
+            sort_keys=False,
+            allow_unicode=True,
+        ).strip()
+        console.print("[green]OpenAI Agents options:[/green]")
+        console.print(openai_agents_payload)
 
 
 @import_app.command("injecagent")

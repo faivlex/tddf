@@ -14,6 +14,7 @@ from tddf.config import (
     CommandTargetConfig,
     HermesTargetConfig,
     LangGraphTargetConfig,
+    OpenAIAgentsTargetConfig,
     OpenClawTargetConfig,
     TddfConfig,
 )
@@ -137,6 +138,48 @@ def _build_langgraph_command(target: LangGraphTargetConfig) -> list[str]:
         )
     if target.langgraph.use_thread_id:
         command.append("--use-thread-id")
+    return command
+
+
+def _build_openai_agents_command(target: OpenAIAgentsTargetConfig) -> list[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "tddf.openai_agents_runner",
+        "--agent",
+        target.openai_agents.agent,
+        "--input-mode",
+        target.openai_agents.input_mode,
+        "--max-turns",
+        str(target.openai_agents.max_turns),
+        "--run-config",
+        json.dumps(
+            _normalize_for_json(target.openai_agents.run_config),
+            sort_keys=True,
+            ensure_ascii=False,
+        ),
+    ]
+    if target.openai_agents.input_template is not None:
+        command.extend(
+            [
+                "--input-template",
+                json.dumps(
+                    _normalize_for_json(target.openai_agents.input_template),
+                    sort_keys=True,
+                    ensure_ascii=False,
+                ),
+            ]
+        )
+    if target.openai_agents.use_session:
+        command.extend(
+            [
+                "--use-session",
+                "--session-backend",
+                target.openai_agents.session_backend,
+            ]
+        )
+    if target.openai_agents.tracing_disabled:
+        command.append("--tracing-disabled")
     return command
 
 
@@ -302,6 +345,52 @@ def _maybe_prepare_openclaw_home(
     return env, cleanup_dirs, metadata, artifact_contents
 
 
+def _maybe_prepare_openai_agents_session(
+    config: TddfConfig,
+) -> tuple[
+    dict[str, str], list[TemporaryDirectory[str]], dict[str, object], dict[str, str]
+]:
+    if not isinstance(config.target, OpenAIAgentsTargetConfig):
+        return {}, [], {}, {}
+
+    metadata: dict[str, object] = {
+        "kind": "openai_agents",
+        "agent": config.target.openai_agents.agent,
+        "input_mode": config.target.openai_agents.input_mode,
+        "max_turns": config.target.openai_agents.max_turns,
+        "use_session": config.target.openai_agents.use_session,
+        "session_backend": config.target.openai_agents.session_backend,
+        "tracing_disabled": config.target.openai_agents.tracing_disabled,
+    }
+    if not config.target.openai_agents.use_session:
+        return {}, [], metadata, {}
+
+    cleanup_dirs: list[TemporaryDirectory[str]] = []
+    if config.target.openai_agents.use_temp_session_dir:
+        temp_dir = TemporaryDirectory(prefix="tddf-openai-agents-")
+        cleanup_dirs.append(temp_dir)
+        session_dir = Path(temp_dir.name)
+        base_dir = config.target.openai_agents.base_session_dir
+        if base_dir is not None:
+            _copy_tree_if_exists(base_dir, session_dir)
+    else:
+        session_dir = config.target.openai_agents.base_session_dir
+        if session_dir is None:
+            return {}, cleanup_dirs, metadata, {}
+        session_dir.mkdir(parents=True, exist_ok=True)
+
+    session_db_path = session_dir / "sessions.sqlite3"
+    metadata.update(
+        {
+            "session_dir": str(session_dir),
+            "session_db_path": str(session_db_path),
+            "session_db_present": session_db_path.exists(),
+        }
+    )
+    env = {"TDDF_OPENAI_AGENTS_SESSION_DB_PATH": str(session_db_path)}
+    return env, cleanup_dirs, metadata, {}
+
+
 @dataclass(slots=True)
 class AdapterHome:
     env: dict[str, str]
@@ -325,6 +414,17 @@ def prepare_adapter_home(
             adapter_name="command",
             adapter_metadata={"kind": "command"},
             adapter_artifact_contents={},
+        )
+    if isinstance(config.target, OpenAIAgentsTargetConfig):
+        env, cleanup_dirs, metadata, artifacts = _maybe_prepare_openai_agents_session(
+            config
+        )
+        return AdapterHome(
+            env=env,
+            cleanup_dirs=cleanup_dirs,
+            adapter_name="openai_agents",
+            adapter_metadata=metadata,
+            adapter_artifact_contents=artifacts,
         )
     if isinstance(config.target, LangGraphTargetConfig):
         return AdapterHome(
@@ -411,6 +511,8 @@ def build_target_invocation(
 
     if isinstance(config.target, CommandTargetConfig):
         command = config.target.command
+    elif isinstance(config.target, OpenAIAgentsTargetConfig):
+        command = _build_openai_agents_command(config.target)
     elif isinstance(config.target, LangGraphTargetConfig):
         command = _build_langgraph_command(config.target)
     elif isinstance(config.target, HermesTargetConfig):
@@ -455,6 +557,12 @@ def _extract_langgraph_trace(
     return _extract_trace(stdout, "TDDF_LANGGRAPH_TRACE=")
 
 
+def _extract_openai_agents_trace(
+    stdout: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    return _extract_trace(stdout, "TDDF_OPENAI_AGENTS_TRACE=")
+
+
 def _extract_openclaw_result(
     stdout: str,
 ) -> tuple[dict[str, object] | None, str | None]:
@@ -487,6 +595,22 @@ def collect_adapter_observability(
             adapter_metadata["trace_parse_error"] = trace_error
         if trace_payload is not None:
             adapter_artifact_contents["hermes_trace.json"] = (
+                json.dumps(trace_payload, indent=2) + "\n"
+            )
+    elif invocation.adapter_name == "openai_agents":
+        trace_payload, trace_error = _extract_openai_agents_trace(stdout)
+        adapter_metadata["stdout_line_count"] = len(stdout.splitlines())
+        adapter_metadata["stderr_line_count"] = len(stderr.splitlines())
+        adapter_metadata["trace_captured"] = trace_payload is not None
+        if trace_error is not None:
+            adapter_metadata["trace_parse_error"] = trace_error
+        if trace_payload is not None:
+            adapter_metadata["event_count"] = trace_payload.get("event_count")
+            adapter_metadata["new_item_count"] = trace_payload.get("new_item_count")
+            adapter_metadata["last_agent_name"] = trace_payload.get("last_agent_name")
+            adapter_metadata["session_id"] = trace_payload.get("session_id")
+            adapter_metadata["last_response_id"] = trace_payload.get("last_response_id")
+            adapter_artifact_contents["openai_agents_trace.json"] = (
                 json.dumps(trace_payload, indent=2) + "\n"
             )
     elif invocation.adapter_name == "langgraph":
@@ -536,6 +660,8 @@ def collect_adapter_observability(
 def describe_target(config: TddfConfig) -> str:
     if isinstance(config.target, CommandTargetConfig):
         return " ".join(config.target.command)
+    if isinstance(config.target, OpenAIAgentsTargetConfig):
+        return f"openai_agents:{config.target.openai_agents.agent}"
     if isinstance(config.target, LangGraphTargetConfig):
         return f"langgraph:{config.target.langgraph.graph}"
     if isinstance(config.target, HermesTargetConfig):

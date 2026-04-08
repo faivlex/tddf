@@ -84,7 +84,7 @@ See `tddf-composed.yaml` for a full working example. Encoding strategies (base64
 
 ## Adapters
 
-TDDF works with any agent that can be invoked as a subprocess. Four adapters are built in:
+TDDF works with any agent that can be invoked as a subprocess. Five adapters are built in:
 
 **command** — Run any script or binary. TDDF passes the prompt and server URLs via environment variables (`TDDF_PROMPT`, `TDDF_WEB_URL`, `TDDF_ATTACKER_URL`, `TDDF_MCP_URL`, etc.). This is the simplest integration path and works for any language or framework.
 
@@ -115,6 +115,19 @@ target:
     input_mode: messages
     stream_modes: [values, updates]
     use_thread_id: true
+```
+
+**openai_agents** — Run [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) agents via `Runner.run_streamed()`. Captures stream events, new items, and raw responses as artifacts. Supports SQLite session continuity for multi-turn scenarios. Also an optional dependency run in a helper process.
+
+```yaml
+# tddf-openai-agents.yaml
+target:
+  kind: openai_agents
+  openai_agents:
+    agent: my_app.agent:my_agent
+    input_mode: prompt
+    max_turns: 12
+    use_session: true
 ```
 
 ## Install

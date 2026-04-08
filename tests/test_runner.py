@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from io import StringIO
@@ -21,6 +22,12 @@ from tddf.traps import build_document_content, build_html_page
 ROOT = Path(".").resolve()
 HERMES_BASE_HOME = ROOT / "tests/fixtures/hermes-home"
 OPENCLAW_BASE_HOME = ROOT / "tests/fixtures/openclaw-home"
+OPENAI_AGENTS_PYTHONPATH = os.pathsep.join(
+    [
+        str((ROOT / "tests/fixtures/openai_agents_sdk").resolve()),
+        os.environ.get("PYTHONPATH", ""),
+    ]
+)
 
 HERMES_TARGET = {
     "kind": "hermes",
@@ -67,6 +74,23 @@ LANGGRAPH_TARGET = {
         "input_mode": "messages",
         "stream_modes": ["values", "updates", "custom"],
         "use_thread_id": True,
+    },
+}
+
+
+OPENAI_AGENTS_TARGET = {
+    "kind": "openai_agents",
+    "cwd": str(ROOT),
+    "env": {"PYTHONPATH": OPENAI_AGENTS_PYTHONPATH},
+    "openai_agents": {
+        "agent": "tests.fixtures.mock_openai_agents_app:safe_agent",
+        "capabilities": ["web", "workspace", "mcp"],
+        "input_mode": "prompt",
+        "max_turns": 12,
+        "use_session": True,
+        "session_backend": "sqlite",
+        "use_temp_session_dir": True,
+        "tracing_disabled": True,
     },
 }
 
@@ -271,6 +295,58 @@ def test_langgraph_target_invocation_builds_expected_command(tmp_path: Path) -> 
     )
 
 
+def test_openai_agents_target_invocation_builds_expected_command(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **OPENAI_AGENTS_TARGET,
+                    "env": {"FOO": "bar", "PYTHONPATH": OPENAI_AGENTS_PYTHONPATH},
+                    "openai_agents": {
+                        **OPENAI_AGENTS_TARGET["openai_agents"],
+                        "run_config": {"workflow_name": "tddf-openai-agents"},
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    invocation = build_target_invocation(
+        config,
+        config_path,
+        prompt="hello from openai agents",
+        web_url="http://example.test/article",
+        attacker_url="http://example.test/collect",
+        mcp_url="http://example.test/mcp",
+        document_path=None,
+        deputy_workspace_dir=None,
+        deputy_secret_env_key=None,
+        deputy_secret_env_value=None,
+        session_id="session-456",
+        step_index=1,
+    )
+
+    assert Path(invocation.command[0]).name == Path(sys.executable).name
+    assert invocation.command[1:3] == ["-m", "tddf.openai_agents_runner"]
+    assert "--agent" in invocation.command
+    assert "tests.fixtures.mock_openai_agents_app:safe_agent" in invocation.command
+    assert invocation.cwd == ROOT
+    assert invocation.env["FOO"] == "bar"
+    assert invocation.env["TDDF_SESSION_ID"] == "session-456"
+    assert invocation.env["TDDF_STEP_INDEX"] == "1"
+    assert invocation.env["TDDF_OPENAI_AGENTS_SESSION_DB_PATH"]
+    assert invocation.adapter_name == "openai_agents"
+    assert (
+        invocation.adapter_metadata["agent"]
+        == "tests.fixtures.mock_openai_agents_app:safe_agent"
+    )
+
+
 def test_incompatible_hermes_config_fails_fast_before_execution(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -360,6 +436,17 @@ def test_describe_target_uses_generalized_adapter_contract(tmp_path: Path) -> No
     assert (
         describe_target(langgraph_config)
         == "langgraph:tests.fixtures.mock_langgraph:safe_graph"
+    )
+
+    openai_agents_config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update({"target": OPENAI_AGENTS_TARGET}),
+    )
+    openai_agents_config = load_config(openai_agents_config_path)
+    assert (
+        describe_target(openai_agents_config)
+        == "openai_agents:tests.fixtures.mock_openai_agents_app:safe_agent"
     )
 
 
@@ -629,6 +716,87 @@ def test_langgraph_multi_turn_uses_thread_id(tmp_path: Path) -> None:
     assert trace_payload["thread_id"] == result.adapter_metadata["thread_id"]
 
 
+def test_mock_openai_agents_target_passes(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration", "poisoned-workspace-search"],
+        transform=lambda raw: raw.update({"target": OPENAI_AGENTS_TARGET}),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+
+    assert batch.status == "passed"
+    assert len(batch.results) == 2
+    assert all(result.status == "passed" for result in batch.results)
+    assert all(result.adapter_name == "openai_agents" for result in batch.results)
+    assert all(
+        result.adapter_metadata["trace_captured"] is True for result in batch.results
+    )
+    assert all(
+        "openai_agents_trace.json" in result.adapter_artifact_contents
+        for result in batch.results
+    )
+
+
+def test_mock_openai_agents_target_fails_on_exfiltration(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **OPENAI_AGENTS_TARGET,
+                    "openai_agents": {
+                        **OPENAI_AGENTS_TARGET["openai_agents"],
+                        "agent": "tests.fixtures.mock_openai_agents_app:exfil_agent",
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert batch.status == "failed"
+    assert result.status == "failed"
+    assert result.adapter_name == "openai_agents"
+    assert any(item.kind == "network_request" for item in result.evidence)
+
+
+def test_openai_agents_multi_turn_uses_session_id(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["multi-turn-context-poisoning"],
+        transform=lambda raw: raw.update(
+            {
+                "target": {
+                    **OPENAI_AGENTS_TARGET,
+                    "openai_agents": {
+                        **OPENAI_AGENTS_TARGET["openai_agents"],
+                        "agent": "tests.fixtures.mock_openai_agents_app:build_safe_agent",
+                        "capabilities": ["web", "mcp"],
+                    },
+                }
+            }
+        ),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+
+    assert result.status == "passed"
+    assert result.adapter_metadata["session_id"]
+    trace_payload = json.loads(
+        result.adapter_artifact_contents["openai_agents_trace.json"]
+    )
+    assert trace_payload["session_id"] == result.adapter_metadata["session_id"]
+    assert trace_payload["session_item_count"] == 4
+
+
 def test_hermes_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
     config_path = _write_temp_config(
         tmp_path,
@@ -710,6 +878,33 @@ def test_langgraph_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
     assert result_payload["adapter_name"] == "langgraph"
     assert result_payload["adapter_metadata"]["trace_captured"] is True
     assert "langgraph_trace.json" in result_payload["adapter_artifact_contents"]
+
+
+def test_openai_agents_artifacts_include_adapter_outputs(tmp_path: Path) -> None:
+    config_path = _write_temp_config(
+        tmp_path,
+        scenario_ids=["hidden-content-exfiltration"],
+        transform=lambda raw: raw.update({"target": OPENAI_AGENTS_TARGET}),
+    )
+    config = load_config(config_path)
+
+    batch = asyncio.run(execute_run(config, config_path))
+    result = batch.results[0]
+    bundle = result.write_artifacts(resolve_artifacts_dir(config, config_path))
+
+    assert result.adapter_name == "openai_agents"
+    assert bundle.adapter_artifacts["openai_agents_trace.json"].exists()
+
+    trace_payload = json.loads(
+        bundle.adapter_artifacts["openai_agents_trace.json"].read_text()
+    )
+    assert trace_payload["agent"] == "tests.fixtures.mock_openai_agents_app:safe_agent"
+    assert trace_payload["session_enabled"] is False
+
+    result_payload = json.loads(bundle.result_json.read_text())
+    assert result_payload["adapter_name"] == "openai_agents"
+    assert result_payload["adapter_metadata"]["trace_captured"] is True
+    assert "openai_agents_trace.json" in result_payload["adapter_artifact_contents"]
 
 
 def test_exfil_agent_fails(tmp_path: Path) -> None:

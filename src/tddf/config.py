@@ -11,6 +11,8 @@ from tddf.compliance import default_frameworks_for_family, validate_framework_re
 AdapterCapability = Literal["web", "document", "deputy", "workspace", "mcp"]
 LangGraphInputMode = Literal["messages", "prompt"]
 LangGraphStreamMode = Literal["values", "updates", "messages", "custom"]
+OpenAIAgentsInputMode = Literal["messages", "prompt"]
+OpenAIAgentsSessionBackend = Literal["sqlite"]
 TrapFamilyKind = Literal[
     "content_injection",
     "behavioural_control",
@@ -203,11 +205,57 @@ class LangGraphTargetConfig(BaseModel):
     langgraph: LangGraphOptionsConfig
 
 
+class OpenAIAgentsOptionsConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    agent: str
+    capabilities: list[AdapterCapability] = Field(
+        default_factory=lambda: ["web", "document", "deputy", "workspace", "mcp"]
+    )
+    input_mode: OpenAIAgentsInputMode = "prompt"
+    input_template: object | None = None
+    max_turns: int = Field(default=10, ge=1, le=100)
+    use_session: bool = True
+    session_backend: OpenAIAgentsSessionBackend = "sqlite"
+    use_temp_session_dir: bool = True
+    base_session_dir: Path | None = None
+    tracing_disabled: bool = True
+    run_config: dict[str, object] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_options(self) -> "OpenAIAgentsOptionsConfig":
+        if ":" not in self.agent:
+            raise ValueError(
+                "OpenAI Agents target 'agent' must use the format 'module.path:object_name'."
+            )
+        if len(self.capabilities) != len(set(self.capabilities)):
+            raise ValueError("OpenAI Agents capabilities must be unique.")
+        if (
+            self.use_session
+            and not self.use_temp_session_dir
+            and self.base_session_dir is None
+        ):
+            raise ValueError(
+                "OpenAI Agents session persistence requires use_temp_session_dir=true or base_session_dir to be set."
+            )
+        return self
+
+
+class OpenAIAgentsTargetConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["openai_agents"] = "openai_agents"
+    cwd: Path | None = None
+    env: dict[str, str] = Field(default_factory=dict)
+    openai_agents: OpenAIAgentsOptionsConfig
+
+
 TargetConfig = Annotated[
     CommandTargetConfig
     | HermesTargetConfig
     | OpenClawTargetConfig
-    | LangGraphTargetConfig,
+    | LangGraphTargetConfig
+    | OpenAIAgentsTargetConfig,
     Field(discriminator="kind"),
 ]
 
@@ -229,6 +277,9 @@ def _capabilities_from_hermes_toolsets(toolsets: set[str]) -> set[AdapterCapabil
 def get_target_capabilities(target: TargetConfig) -> set[AdapterCapability]:
     if isinstance(target, CommandTargetConfig):
         return {"web", "document", "deputy", "workspace", "mcp"}
+
+    if isinstance(target, OpenAIAgentsTargetConfig):
+        return set(target.openai_agents.capabilities)
 
     if isinstance(target, LangGraphTargetConfig):
         return set(target.langgraph.capabilities)

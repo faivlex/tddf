@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,12 @@ from tddf.config_loader import ConfigError, load_config
 
 
 ROOT = Path(".").resolve()
+OPENAI_AGENTS_PYTHONPATH = os.pathsep.join(
+    [
+        str((ROOT / "tests/fixtures/openai_agents_sdk").resolve()),
+        os.environ.get("PYTHONPATH", ""),
+    ]
+)
 
 
 HERMES_TARGET = {
@@ -49,6 +56,23 @@ LANGGRAPH_TARGET = {
         "input_mode": "messages",
         "stream_modes": ["values", "updates", "custom"],
         "use_thread_id": True,
+    },
+}
+
+
+OPENAI_AGENTS_TARGET = {
+    "kind": "openai_agents",
+    "cwd": str(ROOT),
+    "env": {"PYTHONPATH": OPENAI_AGENTS_PYTHONPATH},
+    "openai_agents": {
+        "agent": "tests.fixtures.mock_openai_agents_app:safe_agent",
+        "capabilities": ["web", "workspace", "mcp"],
+        "input_mode": "prompt",
+        "max_turns": 12,
+        "use_session": True,
+        "session_backend": "sqlite",
+        "use_temp_session_dir": True,
+        "tracing_disabled": True,
     },
 }
 
@@ -183,6 +207,34 @@ def test_load_config_accepts_mcp_capable_openclaw_target(tmp_path: Path) -> None
         "workspace",
         "mcp",
     }
+
+
+def test_load_config_accepts_openai_agents_target(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("tddf.yaml").read_text())
+    raw["target"] = OPENAI_AGENTS_TARGET
+    raw["scenarios"] = [raw["scenarios"][0], raw["scenarios"][3]]
+    config_path = _write_config(tmp_path, raw, "openai-agents.yaml")
+
+    config = load_config(config_path)
+
+    assert config.target.kind == "openai_agents"
+    assert config.target_capabilities == {"web", "workspace", "mcp"}
+
+
+def test_load_config_rejects_invalid_openai_agents_reference(tmp_path: Path) -> None:
+    raw = yaml.safe_load(Path("tddf.yaml").read_text())
+    raw["target"] = {
+        "kind": "openai_agents",
+        "cwd": str(ROOT),
+        "env": {},
+        "openai_agents": {
+            "agent": "tests.fixtures.mock_openai_agents_app",
+        },
+    }
+    config_path = _write_config(tmp_path, raw, "invalid-openai-agents.yaml")
+
+    with pytest.raises(ConfigError, match="module.path:object_name"):
+        load_config(config_path)
 
 
 def test_load_config_accepts_langgraph_target(tmp_path: Path) -> None:
