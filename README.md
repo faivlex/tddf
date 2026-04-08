@@ -110,9 +110,9 @@ A batch-level JUnit XML is written to `.tddf/artifacts/<run_id>/junit.xml` for C
 
 ## Why Now
 
-[Promptfoo was acquired by OpenAI](https://www.promptfoo.dev/blog/promptfoo-joining-openai/) in March 2026 — the leading independent LLM evaluation tool is now platform-locked. The [DeepMind "Agent Traps" paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6372438) documented six categories of real attacks against tool-using agents. The EU AI Act goes fully enforceable August 2, 2026.
+[Promptfoo was acquired by OpenAI](https://www.promptfoo.dev/blog/promptfoo-joining-openai/) in March 2026. It remains open source, but its roadmap is now shaped by OpenAI's priorities and Frontier integration. The [DeepMind "Agent Traps" paper](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6372438) documented six categories of real attacks against tool-using agents. The EU AI Act goes fully enforceable August 2, 2026.
 
-TDDF is the independent, open-source alternative for developers who need agent security testing without platform lock-in.
+TDDF is a fully independent alternative built for testing multi-step agents.
 
 ## Design Notes
 
