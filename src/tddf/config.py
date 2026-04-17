@@ -1026,14 +1026,35 @@ class TddfConfig(BaseModel):
     def _expand_registry_scenarios(self) -> list[TrapConfig]:
         if not self.scenarios_from_registry:
             return []
-        # Deferred import: the importer module imports ``TrapConfig`` /
+        # Deferred import: the importer modules import ``TrapConfig`` /
         # ``TrapWebConfig`` / ``TrapDocumentConfig`` from this module.
+        from tddf.importers.agentdojo import materialize_agentdojo_registry
         from tddf.importers.injecagent import materialize_injecagent_registry
         from tddf.registry import load_trap_registry
 
         materialized: list[TrapConfig] = []
+        extra_mcp_tools: list[McpToolConfig] = []
+        existing_tool_names = {tool.name for tool in self.mcp.tools}
         for ref in self.scenarios_from_registry:
             registry_path = _resolve_registry_reference(ref)
             registry = load_trap_registry(registry_path)
-            materialized.extend(materialize_injecagent_registry(registry))
+            if registry.source_name.startswith("agentdojo-"):
+                result = materialize_agentdojo_registry(registry)
+                materialized.extend(result.traps)
+                for tool in result.mcp_tools:
+                    if tool.name in existing_tool_names:
+                        continue
+                    existing_tool_names.add(tool.name)
+                    extra_mcp_tools.append(tool)
+            else:
+                materialized.extend(materialize_injecagent_registry(registry))
+        if extra_mcp_tools:
+            # Auto-register tools the agentdojo materialiser synthesised so
+            # the mock MCP surface recognises the calls the imported
+            # scenarios reference. Users can still override by declaring
+            # a same-named tool in ``mcp.tools`` — those win via the
+            # ``existing_tool_names`` dedup above.
+            self.mcp.tools = list(self.mcp.tools) + extra_mcp_tools
+            if not self.mcp.enabled:
+                self.mcp.enabled = True
         return materialized

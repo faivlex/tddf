@@ -27,6 +27,15 @@ from tddf.baseline import (
     write_baseline,
 )
 from tddf.config_loader import DEFAULT_CONFIG_PATH, ConfigError, load_config
+from tddf.importers.agentdojo import (
+    DEFAULT_AGENTDOJO_LICENSE,
+    DEFAULT_AGENTDOJO_REPO,
+    DEFAULT_BENCHMARK_VERSION,
+    AgentDojoImportError,
+    AgentDojoImportRequest,
+    AgentDojoSuite,
+    import_agentdojo,
+)
 from tddf.importers.injecagent import (
     DEFAULT_INJECAGENT_LICENSE,
     DEFAULT_INJECAGENT_REPO,
@@ -258,6 +267,64 @@ def import_injecagent_command(
     )
     console.print(
         f"[green]Source:[/green] {registry.source_repo}@{registry.source_revision}"
+    )
+
+
+@import_app.command("agentdojo")
+def import_agentdojo_command(
+    output: Path = typer.Option(..., "--output"),
+    revision: str = typer.Option(
+        ..., "--revision", help="Pinned AgentDojo commit, tag, or release ref."
+    ),
+    source_path: Path | None = typer.Option(
+        None,
+        "--source-path",
+        exists=False,
+        file_okay=False,
+        dir_okay=True,
+        help=(
+            "Optional local AgentDojo checkout. When supplied, the importer "
+            "adds it to sys.path before loading the package — use this to "
+            "pin to a checkout rather than the installed version."
+        ),
+    ),
+    suite: AgentDojoSuite = typer.Option(AgentDojoSuite.BANKING, "--suite"),
+    benchmark_version: str = typer.Option(
+        DEFAULT_BENCHMARK_VERSION,
+        "--benchmark-version",
+        help="AgentDojo benchmark version (e.g. v1.2.2).",
+    ),
+    limit: int | None = typer.Option(None, "--limit", min=1),
+    source_repo: str = typer.Option(DEFAULT_AGENTDOJO_REPO, "--source-repo"),
+    source_license: str = typer.Option(DEFAULT_AGENTDOJO_LICENSE, "--source-license"),
+) -> None:
+    """Import AgentDojo benchmark cases into a local registry file with provenance.
+
+    Requires the optional 'agentdojo' dependency: ``pip install 'tddf[agentdojo]'``.
+    """
+    request = AgentDojoImportRequest(
+        revision=revision,
+        suite=suite,
+        benchmark_version=benchmark_version,
+        source_repo=source_repo,
+        source_license=source_license,
+        source_path=source_path.resolve() if source_path is not None else None,
+        limit=limit,
+    )
+    try:
+        registry = import_agentdojo(request)
+    except AgentDojoImportError as error:
+        console.print(f"[red]Import failed:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    resolved_output = output.resolve()
+    write_trap_registry(resolved_output, registry)
+    console.print(
+        f"[green]Imported[/green] {len(registry.traps)} AgentDojo traps to {resolved_output}"
+    )
+    console.print(
+        f"[green]Source:[/green] {registry.source_repo}@{registry.source_revision} "
+        f"(suite={suite.value}, version={benchmark_version})"
     )
 
 

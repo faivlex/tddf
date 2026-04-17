@@ -76,14 +76,19 @@ Each scenario combines three parts: a *trap family* (what's being tested), a *de
 
 ### External benchmarks
 
-TDDF ships a materialiser for [InjecAgent](https://github.com/uiuc-kang-lab/InjecAgent) cases — each case stages as a web or document trap and runs through the same deterministic evaluator. Reference the bundled curated subset, or import and reference the full 1054-case dataset:
+TDDF ships materialisers for two published benchmarks — each case stages as a local trap and runs through the same deterministic evaluator. Reference a bundled curated subset, or import the full dataset:
 
 ```yaml
 # tddf.yaml
 scenarios_from_registry:
   - builtin://injecagent_curated        # bundled subset, zero setup
+  - builtin://agentdojo_curated         # AgentDojo banking + workspace subset
   - registries/injecagent-full.yaml     # from: tddf import injecagent --revision main --output ...
+  - registries/agentdojo-banking.yaml   # from: tddf import agentdojo --suite banking --output ...
 ```
+
+- **[InjecAgent](https://github.com/uiuc-kang-lab/InjecAgent)** — 1,054 indirect-prompt-injection cases. Each case stages as a web or document trap; the structural evaluator gates on attacker-endpoint contact. Pull with `tddf import injecagent`.
+- **[AgentDojo](https://github.com/ethz-spylab/agentdojo)** — every case ships a ground-truth `FunctionCall` sequence, which the materialiser projects directly onto TDDF's semantic evaluator (`expected_attacker_calls`) so scenarios fail when the agent executes the *specific* tool-call pattern AgentDojo's attack was steering it toward. The mock MCP surface auto-registers whatever tools the imported cases reference. Needs the optional extra: `pip install 'tddf[agentdojo]'`, then `tddf import agentdojo --suite banking|workspace|slack|travel --output registries/agentdojo.yaml`.
 
 ## Framework-agnostic adapters
 

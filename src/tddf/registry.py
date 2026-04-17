@@ -84,6 +84,24 @@ class ImportedTrapRuntime(BaseModel):
     adapter_hints: dict[str, object] = Field(default_factory=dict)
 
 
+class ImportedTrapSemantic(BaseModel):
+    """Semantic-evaluator payload carried alongside structural trap data.
+
+    Sources like AgentDojo ship ground-truth tool-call sequences that fit
+    TDDF's ``expected_attacker_calls`` contract directly. Sources that
+    only encode exfiltration-style attacks (InjecAgent) leave this empty.
+    The field is intentionally free-form-ish — ``expected_attacker_calls``
+    holds ``ExpectedCallConstraint``-shaped dicts, ``mcp_tools`` holds
+    ``McpToolConfig``-shaped dicts — so the registry file stays decoupled
+    from Pydantic model imports in ``tddf.config``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_attacker_calls: list[dict[str, object]] = Field(default_factory=list)
+    mcp_tools: list[dict[str, object]] = Field(default_factory=list)
+
+
 class ImportedTrap(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -97,6 +115,7 @@ class ImportedTrap(BaseModel):
     harness: ImportedTrapHarness
     evaluator: ImportedTrapEvaluator
     runtime: ImportedTrapRuntime
+    semantic: ImportedTrapSemantic | None = None
 
     @model_validator(mode="after")
     def validate_frameworks(self) -> "ImportedTrap":
