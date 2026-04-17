@@ -1,10 +1,11 @@
 # TDDF
+<sub>*Timeo Danaos et Dona Ferentes. What Laocoön would tell your agent.*</sub>
+
 
 **Local behaviour regression tests for AI agents.** Write scenarios in YAML, commit them, run them on every PR. Catch when a prompt tweak, model swap, or framework upgrade makes your agent start exfiltrating secrets, abusing tools, or following planted instructions.
 
 Deterministic pass/fail — no cloud, no LLM-as-judge, no telemetry.
 
-<sub>*TDDF — Timeo Danaos et Dona Ferentes. What Laocoön would tell your agent.*</sub>
 
 ```
  Scenario                       Severity  Status    Regression
