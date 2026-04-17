@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import sys
 from pathlib import Path
 
 import typer
@@ -821,6 +823,50 @@ def assess(
 def version() -> None:
     """Print the installed TDDF version."""
     console.print(__version__)
+
+
+@app.command("mcp-server")
+def mcp_server_command(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+    capture_file: Path | None = typer.Option(
+        None,
+        "--capture-file",
+        help=(
+            "Path to write captured tool-call records as JSON Lines. "
+            "Defaults to $TDDF_MCP_CAPTURE_FILE if set."
+        ),
+    ),
+) -> None:
+    """Run TDDF as an MCP server over stdio.
+
+    Invoked as a subprocess by agent MCP clients (e.g. Claude Agent SDK).
+    Reads JSON-RPC 2.0 requests from stdin, writes responses to stdout,
+    and appends every captured tool-call record to ``--capture-file`` so
+    the parent ``tddf run`` process can merge them into its evaluator
+    view after the agent exits.
+    """
+    # Prefer TDDF_CONFIG_PATH from the subprocess env (set by ``tddf run``)
+    # over the default so the stdio server uses the same config as the
+    # running scenario when the user relies on defaults.
+    if config == DEFAULT_CONFIG_PATH and os.environ.get("TDDF_CONFIG_PATH"):
+        config = Path(os.environ["TDDF_CONFIG_PATH"])
+
+    try:
+        loaded = load_config(config)
+    except ConfigError as error:
+        print(f"tddf mcp-server: invalid config: {error}", file=sys.stderr)
+        raise typer.Exit(code=1) from error
+
+    if capture_file is None:
+        env_capture = os.environ.get("TDDF_MCP_CAPTURE_FILE")
+        if env_capture:
+            capture_file = Path(env_capture)
+
+    # Deferred import so tddf's main CLI path doesn't eagerly load the
+    # stdio module if it's never used.
+    from tddf.mcp_stdio import run_stdio_server
+
+    run_stdio_server(loaded.mcp, capture_file)
 
 
 if __name__ == "__main__":

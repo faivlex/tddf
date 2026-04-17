@@ -449,7 +449,9 @@ def _maybe_prepare_openai_agents_session(
 
 def _maybe_prepare_claude_agent_sdk_home(
     config: TddfConfig,
+    config_path: Path,
     mcp_url: str | None,
+    mcp_capture_file: Path | None,
 ) -> tuple[
     dict[str, str], list[TemporaryDirectory[str]], dict[str, object], dict[str, str]
 ]:
@@ -474,6 +476,7 @@ def _maybe_prepare_claude_agent_sdk_home(
     env: dict[str, str] = {}
     artifact_contents: dict[str, str] = {}
 
+    temp_home_path: Path | None = None
     if config.target.claude_agent_sdk.use_temp_home:
         temp_home = TemporaryDirectory(prefix="tddf-claude-agent-home-")
         cleanup_dirs.append(temp_home)
@@ -501,6 +504,32 @@ def _maybe_prepare_claude_agent_sdk_home(
 
     if config.target.claude_agent_sdk.inject_mcp_config and mcp_url is not None:
         env["TDDF_CLAUDE_AGENT_MCP_URL"] = mcp_url
+        # Write a real .mcp.json pointing at `tddf mcp-server` so the SDK
+        # discovers TDDF as an MCP server over stdio. Falls back to the
+        # existing HTTP URL env var above for agents that prefer HTTP.
+        if temp_home_path is not None:
+            mcp_json_path = temp_home_path / ".mcp.json"
+            mcp_env: dict[str, str] = {}
+            if mcp_capture_file is not None:
+                mcp_env["TDDF_MCP_CAPTURE_FILE"] = str(mcp_capture_file)
+            mcp_json = {
+                "mcpServers": {
+                    "tddf": {
+                        "command": sys.executable,
+                        "args": [
+                            "-m",
+                            "tddf",
+                            "mcp-server",
+                            "--config",
+                            str(config_path),
+                        ],
+                        "env": mcp_env,
+                    }
+                }
+            }
+            mcp_json_path.write_text(json.dumps(mcp_json, indent=2) + "\n")
+            artifact_contents["mcp.json"] = mcp_json_path.read_text()
+            metadata["mcp_config_path"] = str(mcp_json_path)
 
     return env, cleanup_dirs, metadata, artifact_contents
 
@@ -519,6 +548,7 @@ def prepare_adapter_home(
     config_path: Path,
     mcp_url: str | None,
     workspace_path: Path | None = None,
+    mcp_capture_file: Path | None = None,
 ) -> AdapterHome:
     cwd = resolve_target_cwd(config, config_path)
     if isinstance(config.target, CommandTargetConfig):
@@ -531,7 +561,7 @@ def prepare_adapter_home(
         )
     if isinstance(config.target, ClaudeAgentSDKTargetConfig):
         env, cleanup_dirs, metadata, artifacts = _maybe_prepare_claude_agent_sdk_home(
-            config, mcp_url
+            config, config_path, mcp_url, mcp_capture_file
         )
         return AdapterHome(
             env=env,
@@ -604,6 +634,7 @@ def build_target_invocation(
     session_id: str | None = None,
     step_index: int = 0,
     adapter_home: AdapterHome | None = None,
+    mcp_capture_file: Path | None = None,
 ) -> TargetInvocation:
     env = os.environ.copy()
     cwd = resolve_target_cwd(config, config_path)
@@ -619,6 +650,8 @@ def build_target_invocation(
             deputy_secret_env_key,
             deputy_secret_env_value,
             workspace_path,
+            mcp_capture_file=mcp_capture_file,
+            config_path=config_path,
         )
     )
 
@@ -832,15 +865,26 @@ def build_target_environment(
     deputy_secret_env_key: str | None,
     deputy_secret_env_value: str | None,
     workspace_path: Path | None = None,
+    mcp_capture_file: Path | None = None,
+    config_path: Path | None = None,
 ) -> dict[str, str]:
     env = {
         "TDDF_PROMPT": prompt,
         "TDDF_ATTACKER_URL": attacker_url,
     }
+    if config_path is not None:
+        # Lets any agent that wants to spawn ``tddf mcp-server`` itself
+        # find the same config the scenario was loaded from.
+        env["TDDF_CONFIG_PATH"] = str(config_path)
     if web_url is not None:
         env["TDDF_WEB_URL"] = web_url
     if mcp_url is not None:
         env["TDDF_MCP_URL"] = mcp_url
+    if mcp_capture_file is not None:
+        # Any agent (or adapter) that spawns ``tddf mcp-server`` inherits
+        # this path and appends captured tool calls for the parent run
+        # to merge after the scenario exits.
+        env["TDDF_MCP_CAPTURE_FILE"] = str(mcp_capture_file)
     if document_path is not None:
         env["TDDF_DOCUMENT_PATH"] = str(document_path)
     if deputy_workspace_dir is not None:

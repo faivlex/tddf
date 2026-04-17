@@ -377,8 +377,26 @@ async def _execute_scenario(
         else None
     )
 
+    # Create a per-scenario capture file for any stdio-transported MCP
+    # server the agent may spawn (via e.g. `tddf mcp-server`). Tool calls
+    # recorded there get merged back into the in-memory capture after the
+    # scenario completes, so structural / semantic evaluators see both
+    # HTTP-path and stdio-path calls.
+    mcp_capture_tempdir: TemporaryDirectory[str] | None = None
+    mcp_capture_file: Path | None = None
+    if mcp_server is not None:
+        mcp_capture_tempdir = TemporaryDirectory(prefix="tddf-mcp-capture-")
+        mcp_capture_file = Path(mcp_capture_tempdir.name) / "capture.jsonl"
+        mcp_capture_file.touch()
+
     # Prepare adapter home once for the entire scenario (persists across steps)
-    adapter_home = prepare_adapter_home(config, config_path, mcp_url, workspace_path)
+    adapter_home = prepare_adapter_home(
+        config,
+        config_path,
+        mcp_url,
+        workspace_path,
+        mcp_capture_file=mcp_capture_file,
+    )
 
     steps = trap.effective_steps
     is_multi_turn = len(steps) > 1
@@ -422,6 +440,7 @@ async def _execute_scenario(
                 session_id=session_id,
                 step_index=step_index,
                 adapter_home=adapter_home,
+                mcp_capture_file=mcp_capture_file,
             )
             last_command = target_invocation.command
 
@@ -494,6 +513,31 @@ async def _execute_scenario(
 
         total_duration = time.perf_counter() - scenario_start
         completed_at = datetime.now(UTC)
+
+        # Merge any stdio-transported MCP captures back into the in-memory
+        # capture so the evaluator sees HTTP + stdio calls as a single trace.
+        if (
+            mcp_server is not None
+            and mcp_capture_file is not None
+            and mcp_capture_file.exists()
+        ):
+            from tddf.mcp_stdio import load_captures_from_file
+
+            stdio_calls = load_captures_from_file(mcp_capture_file)
+            if stdio_calls:
+                with mcp_server.mcp_capture.lock:
+                    mcp_server.mcp_capture.calls.extend(stdio_calls)
+                # Re-read the final snapshot of evidence so the newly-merged
+                # tool_call entries show up in all_evidence too.
+                new_evidence_after_merge, prev_capture_count, prev_mcp_count = (
+                    _snapshot_new_evidence(
+                        attacker_server,
+                        mcp_server,
+                        prev_capture_count,
+                        prev_mcp_count,
+                    )
+                )
+                all_evidence.extend(new_evidence_after_merge)
 
         mcp_resource_catalog = [
             (item.key, item.value, item.sensitive) for item in config.mcp.resources
@@ -609,6 +653,8 @@ async def _execute_scenario(
             deputy_tempdir.cleanup()
         if workspace_tempdir is not None:
             workspace_tempdir.cleanup()
+        if mcp_capture_tempdir is not None:
+            mcp_capture_tempdir.cleanup()
         if mcp_server is not None:
             mcp_server.stop()
         attacker_server.stop()

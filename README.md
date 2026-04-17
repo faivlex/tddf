@@ -263,11 +263,12 @@ mcp:
       response_template: '{"id":"msg_001","status":"sent"}'
 ```
 
-TDDF speaks **Model Context Protocol** (JSON-RPC 2.0) over **streamable HTTP**. Any HTTP-capable MCP client — LangGraph with MCP tools, the OpenAI Agents SDK with MCP, or any agent you wire up via Anthropic's Python MCP SDK — can point at `TDDF_MCP_URL` and its tool calls are recorded automatically. The negotiated protocol version lands on each run artefact so auditors can confirm which contract the run ran against.
+TDDF speaks **Model Context Protocol** (JSON-RPC 2.0) over both transports the spec covers — **streamable HTTP** and **stdio** — so any MCP client can point at TDDF and have its tool calls recorded automatically. The negotiated protocol version lands on each run artefact so auditors can confirm which contract the run ran against.
+
+- **HTTP** — TDDF exports `TDDF_MCP_URL`; agents using LangGraph's MCP integration, the OpenAI Agents SDK, or Anthropic's Python MCP SDK connect to it as a remote server.
+- **Stdio** — for Claude Agent SDK and other clients that expect local MCP servers as subprocesses, set `inject_mcp_config: true` on the `claude_agent_sdk` target and TDDF writes an `.mcp.json` into the adapter's home pointing at `python -m tddf mcp-server`. The SDK launches it, speaks JSON-RPC over stdin/stdout, and TDDF records every tool call into the same capture surface the HTTP path uses.
 
 A plain-HTTP query-param fallback (`GET <TDDF_MCP_URL>?tool=<name>&<arg>=<value>`) is also supported for fixture agents that don't need a full MCP client — useful for quick tests where setting up one would be overkill.
-
-**Stdio transport** — the dominant MCP transport for Claude Agent SDK — is coming in the next release. Until then, Claude Agent SDK scenarios work through the structural evaluator (HTTP-to-attacker-endpoint); the semantic evaluator requires the agent to be reachable through TDDF's HTTP surface.
 
 ## Contributing
 
