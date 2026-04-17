@@ -90,6 +90,7 @@ class RunResult:
     evidence: list[Evidence] = field(default_factory=list)
     step_evidence: list[StepEvidence] = field(default_factory=list)
     planted_payloads: list[PlantedPayload] = field(default_factory=list)
+    semantic_result: dict[str, object] | None = None
     stdout: str = ""
     stderr: str = ""
     adapter_artifact_contents: dict[str, str] = field(default_factory=dict)

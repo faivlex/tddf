@@ -41,6 +41,7 @@ class BaselineFingerprintEntry(BaseModel):
     tool_name: str | None = None
     resource_key: str | None = None
     sensitive: bool | None = None
+    tool_arguments_canonical: str | None = None
 
     def sort_key(self) -> tuple[object, ...]:
         return (
@@ -50,6 +51,7 @@ class BaselineFingerprintEntry(BaseModel):
             self.tool_name or "",
             self.resource_key or "",
             1 if self.sensitive else 0,
+            self.tool_arguments_canonical or "",
         )
 
     def signature(self) -> tuple[object, ...]:
@@ -60,6 +62,7 @@ class BaselineFingerprintEntry(BaseModel):
             self.tool_name,
             self.resource_key,
             bool(self.sensitive) if self.sensitive is not None else None,
+            self.tool_arguments_canonical,
         )
 
 
@@ -119,9 +122,24 @@ def compute_config_hash(config: TddfConfig) -> str:
     return _sha256(config.model_dump(mode="json"))
 
 
-def extract_evidence_fingerprint(result: RunResult) -> list[BaselineFingerprintEntry]:
+def extract_evidence_fingerprint(
+    result: RunResult,
+    *,
+    include_tool_arguments: bool = False,
+) -> list[BaselineFingerprintEntry]:
+    """Build the deduplicated evidence fingerprint for a result.
+
+    When ``include_tool_arguments`` is True (the caller knows the scenario
+    opts into semantic evaluation), ``tool_call`` entries also carry a
+    canonical-JSON serialisation of their arguments so baselines can detect
+    semantic-argument drift without depending on LLM-variable bodies.
+    Non-semantic scenarios stay lossy — the default behaviour is preserved.
+    """
     seen: dict[tuple[object, ...], BaselineFingerprintEntry] = {}
     for item in result.evidence:
+        args_canonical: str | None = None
+        if include_tool_arguments and item.kind == "tool_call" and item.tool_arguments:
+            args_canonical = _canonical_json(item.tool_arguments)
         entry = BaselineFingerprintEntry(
             kind=item.kind,
             method=item.method,
@@ -129,6 +147,7 @@ def extract_evidence_fingerprint(result: RunResult) -> list[BaselineFingerprintE
             tool_name=item.tool_name,
             resource_key=item.resource_key,
             sensitive=item.sensitive,
+            tool_arguments_canonical=args_canonical,
         )
         seen[entry.signature()] = entry
     return sorted(seen.values(), key=lambda e: e.sort_key())
@@ -175,7 +194,10 @@ def build_baseline(
             adapter=result.adapter_name,
             severity=result.severity,
             status=status,
-            evidence_fingerprint=extract_evidence_fingerprint(result),
+            evidence_fingerprint=extract_evidence_fingerprint(
+                result,
+                include_tool_arguments=bool(trap.expected_attacker_calls),
+            ),
         )
 
     if orphan_results:
@@ -390,7 +412,12 @@ def compare(
         current_hash = (
             compute_scenario_content_hash(trap) if trap is not None else None
         )
-        current_fp = extract_evidence_fingerprint(result)
+        current_fp = extract_evidence_fingerprint(
+            result,
+            include_tool_arguments=bool(
+                trap is not None and trap.expected_attacker_calls
+            ),
+        )
         baseline_entry = baseline.scenarios.get(scenario_id)
 
         if baseline_entry is None or (

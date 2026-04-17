@@ -2,13 +2,30 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import threading
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
-from tddf.config import McpConfig, McpResourceConfig
+from tddf.config import McpConfig, McpResourceConfig, McpToolConfig
+
+
+_TOOL_TEMPLATE_TOKEN = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+
+
+def _render_tool_response(template: str, args: dict[str, str]) -> str:
+    """Substitute ``{arg_name}`` tokens in ``template`` with the caller's
+    argument values. Missing args render as ``<missing:arg_name>`` so the
+    misconfiguration shows up in the response rather than silently emitting
+    a half-rendered template."""
+
+    def replace(match: re.Match[str]) -> str:
+        key = match.group(1)
+        return str(args.get(key, f"<missing:{key}>"))
+
+    return _TOOL_TEMPLATE_TOKEN.sub(replace, template)
 
 if TYPE_CHECKING:
     from tddf.results import Evidence
@@ -145,8 +162,13 @@ class _McpHandler(_BaseHandler):
         }
         tool_name = query.get("tool", ["list_resources"])[0]
         resource_key = query.get("key", [None])[0]
-        allowed = tool_name in config.allowed_tools
-        tool_sensitive = tool_name in config.sensitive_tools
+        custom_tool: McpToolConfig | None = next(
+            (tool for tool in config.tools if tool.name == tool_name), None
+        )
+        # A tool is allowed if it's in ``allowed_tools`` OR explicitly
+        # configured via ``tools:`` (configuring a tool implies allowing it).
+        allowed = tool_name in config.allowed_tools or custom_tool is not None
+        tool_sensitive = config.is_sensitive_tool(tool_name)
 
         if not allowed:
             entry = McpCall(
@@ -213,6 +235,28 @@ class _McpHandler(_BaseHandler):
                     },
                 }
             )
+            return
+
+        if custom_tool is not None:
+            rendered = _render_tool_response(
+                custom_tool.response_template, flat_query
+            )
+            try:
+                payload = json.loads(rendered)
+            except json.JSONDecodeError:
+                payload = {"raw_response": rendered}
+            entry = McpCall(
+                tool_name=tool_name,
+                resource_key=resource_key,
+                sensitive=tool_sensitive,
+                allowed=True,
+                tool_sensitive=tool_sensitive,
+                resource_sensitive=False,
+                query_arguments=flat_query,
+            )
+            with capture.lock:
+                capture.calls.append(entry)
+            self._send_json(payload)
             return
 
         self._send_json({"error": f"Unsupported tool: {tool_name}"}, status_code=400)

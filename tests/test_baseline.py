@@ -112,6 +112,47 @@ def test_content_hash_stable_under_framework_reordering() -> None:
     assert compute_scenario_content_hash(trap_a) == compute_scenario_content_hash(trap_b)
 
 
+def test_fingerprint_omits_tool_arguments_by_default() -> None:
+    """Non-semantic scenarios keep the lossy fingerprint — args don't enter
+    the signature, so LLM-driven arg variance can't cause false drift."""
+    result = _make_result(
+        "s",
+        "passed",
+        evidence=[
+            Evidence(
+                kind="tool_call",
+                detail="",
+                tool_name="send_email",
+                tool_arguments={"to": "alice@x.com"},
+            )
+        ],
+    )
+    fingerprint = extract_evidence_fingerprint(result, include_tool_arguments=False)
+    assert fingerprint[0].tool_arguments_canonical is None
+
+
+def test_fingerprint_includes_canonical_args_for_semantic_scenarios() -> None:
+    """With ``include_tool_arguments=True``, args are serialised canonically
+    so arg drift shows up in baseline diffs."""
+    result = _make_result(
+        "s",
+        "passed",
+        evidence=[
+            Evidence(
+                kind="tool_call",
+                detail="",
+                tool_name="send_email",
+                tool_arguments={"to": "alice@x.com", "body": "hi"},
+            )
+        ],
+    )
+    fingerprint = extract_evidence_fingerprint(result, include_tool_arguments=True)
+    canonical = fingerprint[0].tool_arguments_canonical
+    assert canonical is not None
+    # Canonical JSON has sorted keys and no whitespace.
+    assert canonical == '{"body":"hi","to":"alice@x.com"}'
+
+
 def test_extract_evidence_fingerprint_dedups_and_sorts() -> None:
     evidence = [
         Evidence(kind="network_request", detail="first body", method="POST", path="/x"),
@@ -126,9 +167,9 @@ def test_extract_evidence_fingerprint_dedups_and_sorts() -> None:
 
     assert len(fingerprint) == 3
     signatures = {entry.signature() for entry in fingerprint}
-    assert ("network_request", "POST", "/x", None, None, None) in signatures
-    assert ("network_request", "GET", "/y", None, None, None) in signatures
-    assert ("tool_call", None, None, "read_resource", None, True) in signatures
+    assert ("network_request", "POST", "/x", None, None, None, None) in signatures
+    assert ("network_request", "GET", "/y", None, None, None, None) in signatures
+    assert ("tool_call", None, None, "read_resource", None, True, None) in signatures
 
 
 def test_build_baseline_refuses_errors_by_default() -> None:

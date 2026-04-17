@@ -580,6 +580,52 @@ class ScenarioCompositionConfig(BaseModel):
     strategies: list[str] = Field(default_factory=list, min_length=1)
 
 
+class ArgConstraintDict(BaseModel):
+    """Dict-form argument constraint for a semantic tool-call expectation.
+
+    Exactly one of ``equals`` / ``contains`` / ``one_of`` must be set. A
+    bare string value in ``where:`` is equivalent to ``{equals: <str>}``
+    — pydantic accepts either form via the union on the parent model.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    equals: str | None = None
+    contains: str | None = None
+    one_of: list[str] | None = None
+
+    @model_validator(mode="after")
+    def exactly_one_form(self) -> "ArgConstraintDict":
+        forms = [
+            ("equals", self.equals),
+            ("contains", self.contains),
+            ("one_of", self.one_of),
+        ]
+        set_count = sum(1 for _, value in forms if value is not None)
+        if set_count != 1:
+            raise ValueError(
+                "Argument constraint must specify exactly one of "
+                "'equals', 'contains', or 'one_of'."
+            )
+        return self
+
+
+class ExpectedCallConstraint(BaseModel):
+    """One entry in a scenario's ``expected_attacker_calls`` list.
+
+    Matches an observed tool call when the tool name equals ``tool`` and
+    every key in ``where`` matches the corresponding observed argument
+    under its constraint form. ``after`` names tools that must have been
+    matched (in this scenario) before this constraint is eligible.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    tool: str
+    where: dict[str, str | ArgConstraintDict] = Field(default_factory=dict)
+    after: list[str] = Field(default_factory=list)
+
+
 class TrapConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -601,6 +647,7 @@ class TrapConfig(BaseModel):
     exfiltration: TrapExfiltrationConfig = Field(default_factory=TrapExfiltrationConfig)
     requires_mcp: bool = False
     snapshot: bool = False
+    expected_attacker_calls: list[ExpectedCallConstraint] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_prompt_or_steps(self) -> "TrapConfig":
@@ -644,6 +691,23 @@ class McpResourceConfig(BaseModel):
     sensitive: bool = False
 
 
+class McpToolConfig(BaseModel):
+    """First-class arbitrary tool definition on the mock MCP surface.
+
+    The handler records calls to ``name`` with their args, substitutes
+    ``{arg_name}`` tokens in ``response_template`` with the caller's
+    argument values, and returns the rendered JSON. ``sensitive=True``
+    is equivalent to listing the tool in ``McpConfig.sensitive_tools``.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    parameters: list[str] = Field(default_factory=list)
+    response_template: str = '{"status": "ok"}'
+    sensitive: bool = False
+
+
 class McpConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -663,6 +727,17 @@ class McpConfig(BaseModel):
             ),
         ]
     )
+    tools: list[McpToolConfig] = Field(default_factory=list)
+
+    def is_sensitive_tool(self, tool_name: str) -> bool:
+        """A tool is sensitive if listed in ``sensitive_tools`` or flagged
+        on its ``McpToolConfig``."""
+        if tool_name in self.sensitive_tools:
+            return True
+        for tool in self.tools:
+            if tool.name == tool_name and tool.sensitive:
+                return True
+        return False
 
 
 def get_harness_capabilities(mcp_config: McpConfig) -> set[AdapterCapability]:

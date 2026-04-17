@@ -171,8 +171,57 @@ def _print_single_result(
             for item in step.evidence:
                 step_lines.extend(_render_evidence_item(item, indent="  "))
         table.add_row("Step Evidence", "\n".join(step_lines))
+    if result.semantic_result is not None:
+        table.add_row(
+            "Semantic evaluator", _render_semantic_result(result.semantic_result)
+        )
 
     console.print(table)
+
+
+def _render_semantic_result(payload: dict[str, object]) -> str:
+    lines: list[str] = []
+    triggered = bool(payload.get("triggered"))
+    header = (
+        "[red]triggered — attacker pattern matched in full[/red]"
+        if triggered
+        else "[green]not triggered[/green]"
+    )
+    lines.append(header)
+    for entry in payload.get("matched") or []:
+        lines.append(
+            f"  [green]✓[/green] {_e(entry.get('tool'))}"
+            f"({_format_where_dict(entry.get('where') or {})})"
+            + _format_after_suffix(entry.get("after") or [])
+        )
+    for entry in payload.get("unmatched") or []:
+        lines.append(
+            f"  [red]✗[/red] {_e(entry.get('tool'))}"
+            f"({_format_where_dict(entry.get('where') or {})})"
+            + f" — {_e(entry.get('reason'))}"
+        )
+    return "\n".join(lines)
+
+
+def _format_where_dict(where: dict[str, object]) -> str:
+    parts: list[str] = []
+    for key, value in where.items():
+        if isinstance(value, str):
+            parts.append(f"{_e(key)}={_e(value)}")
+        elif isinstance(value, dict):
+            if "contains" in value:
+                parts.append(f"{_e(key)}∋{_e(value['contains'])!r}")
+            elif "one_of" in value:
+                parts.append(f"{_e(key)}∈{_e(value['one_of'])}")
+            elif "equals" in value:
+                parts.append(f"{_e(key)}={_e(value['equals'])}")
+    return ", ".join(parts)
+
+
+def _format_after_suffix(after: list[object]) -> str:
+    if not after:
+        return ""
+    return " after " + ", ".join(_e(t) for t in after)
 
 
 def print_run_batch(
