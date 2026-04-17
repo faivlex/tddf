@@ -12,7 +12,19 @@ def test_action_yaml_is_valid_and_composite() -> None:
     assert action["runs"]["using"] == "composite"
     assert any(step.get("id") == "run-tddf" for step in action["runs"]["steps"])
     assert "fail-severity" in action["inputs"]
+    assert "extra-args" in action["inputs"]
     assert "artifacts-path" in action["outputs"]
+
+
+def test_action_run_step_threads_extra_args_into_tddf_run() -> None:
+    """``extra-args`` must reach the actual ``tddf run`` invocation so callers
+    can pass ``--baseline`` / ``--snapshot`` through without forking the
+    action."""
+    action = yaml.safe_load(Path("action.yml").read_text())
+    run_step = next(
+        step for step in action["runs"]["steps"] if step.get("id") == "run-tddf"
+    )
+    assert "${{ inputs.extra-args }}" in run_step["run"]
 
 
 def test_example_workflow_is_valid_yaml() -> None:

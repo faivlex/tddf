@@ -14,6 +14,16 @@ from tddf.assess import (
     generate_assessment_config,
     generated_scenario_summary,
 )
+from tddf.baseline import (
+    DEFAULT_BASELINE_PATH,
+    BaselineBuildError,
+    BaselineLoadError,
+    build_baseline,
+    compare,
+    detect_git_commit,
+    load_baseline,
+    write_baseline,
+)
 from tddf.config_loader import DEFAULT_CONFIG_PATH, ConfigError, load_config
 from tddf.importers.injecagent import (
     DEFAULT_INJECAGENT_LICENSE,
@@ -23,12 +33,27 @@ from tddf.importers.injecagent import (
     InjecAgentSetting,
     import_injecagent,
 )
-from tddf.output import print_run_batch
+from tddf.output import (
+    print_baseline_diff,
+    print_baseline_file,
+    print_run_batch,
+    print_snapshot_diffs,
+)
 from tddf.registry import write_trap_registry
 from tddf.runner import execute_run
 from tddf.results import SEVERITY_RANK
+from tddf.snapshots import (
+    DEFAULT_SNAPSHOTS_DIR,
+    SnapshotLoadError,
+    build_snapshot,
+    compare_snapshot_for_result,
+    load_snapshot,
+    snapshot_path_for,
+    write_snapshot,
+)
 from tddf.target import describe_target, resolve_artifacts_dir
 from tddf.templates import TemplateAdapter, render_config
+from tddf.watch import run_watch
 
 
 def _format_capabilities(capabilities: set[str]) -> str:
@@ -59,10 +84,10 @@ def _normalize_for_output(payload: object) -> object:
 
 app = typer.Typer(
     help=(
-        "TDDF — test whether your AI agent can be tricked into leaking data.\n\n"
-        "Hosts trap content locally, runs your agent against it, and checks "
-        "for exfiltration attempts and sensitive tool access. "
-        "Pass/fail is deterministic: no LLM-as-judge."
+        "TDDF — behaviour regression tests for AI agents.\n\n"
+        "Runs your agent against local mock servers with planted traps and checks "
+        "deterministically whether the agent leaks data or abuses sensitive tools. "
+        "Scenarios live in your repo. No LLM-as-judge. Nothing uploaded."
     ),
     epilog=(
         "Examples:\n"
@@ -79,6 +104,14 @@ import_app = typer.Typer(
     help="Import attack payloads from academic benchmarks into local registry files."
 )
 app.add_typer(import_app, name="import")
+baseline_app = typer.Typer(
+    help="Manage TDDF run baselines for regression detection."
+)
+app.add_typer(baseline_app, name="baseline")
+snapshot_app = typer.Typer(
+    help="Manage per-scenario observable snapshots (byte-exact regression gate)."
+)
+app.add_typer(snapshot_app, name="snapshot")
 console = Console()
 
 
@@ -226,26 +259,45 @@ def import_injecagent_command(
     )
 
 
-@app.command()
-def run(
-    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
-    fail_severity: str = typer.Option(
-        "low",
-        "--fail-severity",
-        help="Exit non-zero only for failures at or above this severity (errors and timeouts always fail).",
-    ),
-) -> None:
-    """Run all trap scenarios against your agent and report pass/fail results."""
+def _execute_run_once(
+    config: Path,
+    fail_severity: str,
+    baseline: Path | None,
+    strict_baseline: bool,
+    snapshot_compare: bool = False,
+    snapshots_dir: Path = DEFAULT_SNAPSHOTS_DIR,
+) -> int:
+    """Core run logic shared between ``tddf run`` and ``tddf watch``.
+
+    Returns an exit code (0 = clean, 1 = failures/regressions, 2 = baseline
+    missing/corrupt) rather than raising ``typer.Exit`` so the watch loop
+    can continue after a failing run. User-facing output is still written
+    to the console.
+    """
     if fail_severity not in SEVERITY_RANK:
         console.print(
             "[red]Invalid fail severity:[/red] choose one of critical, high, medium, low"
         )
-        raise typer.Exit(code=1)
+        return 1
+    if strict_baseline and baseline is None:
+        console.print("[red]--strict-baseline requires --baseline.[/red]")
+        return 1
+
     try:
         loaded = load_config(config)
     except ConfigError as error:
         console.print(f"[red]Invalid configuration:[/red] {error}")
-        raise typer.Exit(code=1) from error
+        return 1
+
+    baseline_file = None
+    baseline_path_resolved: Path | None = None
+    if baseline is not None:
+        baseline_path_resolved = baseline.resolve()
+        try:
+            baseline_file = load_baseline(baseline_path_resolved)
+        except BaselineLoadError as error:
+            console.print(f"[red]Cannot load baseline:[/red] {error}")
+            return 2
 
     resolved_config_path = config.resolve()
     batch = asyncio.run(execute_run(loaded, resolved_config_path))
@@ -272,8 +324,415 @@ def run(
             for scenario in loaded.scenario_definitions
         },
     )
-    if batch.should_fail(fail_severity):
+
+    snapshot_fail = False
+    if snapshot_compare:
+        resolved_snapshots_dir = snapshots_dir.resolve()
+        snapshot_diffs = []
+        for result in batch.results:
+            scenarios_by_id = {
+                s.id: s for s in loaded.scenario_definitions
+            }
+            scenario = scenarios_by_id.get(result.scenario_id)
+            if scenario is None or not scenario.snapshot:
+                continue
+            try:
+                diff = compare_snapshot_for_result(result, resolved_snapshots_dir)
+            except SnapshotLoadError as error:
+                console.print(f"[red]Cannot load snapshot:[/red] {error}")
+                return 2
+            snapshot_diffs.append(diff)
+            if not diff.is_clean:
+                snapshot_fail = True
+        if snapshot_diffs:
+            print_snapshot_diffs(snapshot_diffs)
+            run_dir = artifacts_dir / batch.run_id
+            run_dir.mkdir(parents=True, exist_ok=True)
+            diff_path = run_dir / "snapshot-diffs.json"
+            diff_path.write_text(
+                json.dumps([d.to_dict() for d in snapshot_diffs], indent=2) + "\n"
+            )
+            console.print(f"Snapshot diffs JSON: {diff_path}")
+
+    if baseline_file is not None:
+        assert baseline_path_resolved is not None
+        diff = compare(
+            baseline_file, batch, loaded, baseline_path=baseline_path_resolved
+        )
+        print_baseline_diff(diff)
+        run_dir = artifacts_dir / batch.run_id
+        run_dir.mkdir(parents=True, exist_ok=True)
+        diff_path = run_dir / "baseline-diff.json"
+        diff_path.write_text(json.dumps(diff.to_dict(), indent=2) + "\n")
+        console.print(f"Baseline diff JSON: {diff_path}")
+        baseline_fail = diff.should_fail(fail_severity, strict=strict_baseline)
+        return 1 if baseline_fail or snapshot_fail else 0
+
+    return 1 if batch.should_fail(fail_severity) or snapshot_fail else 0
+
+
+@app.command()
+def run(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+    fail_severity: str = typer.Option(
+        "low",
+        "--fail-severity",
+        help="Exit non-zero only for failures at or above this severity (errors and timeouts always fail).",
+    ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Optional path to a saved baseline. With --baseline, the run exits non-zero only on regressions (and error/timeout).",
+    ),
+    strict_baseline: bool = typer.Option(
+        False,
+        "--strict-baseline",
+        help="Under --baseline, also fail the run on drift, missing scenarios, and new-failing scenarios.",
+    ),
+    snapshot_compare: bool = typer.Option(
+        False,
+        "--snapshot",
+        help="Compare observables against saved snapshots for scenarios with snapshot: true; fail on mismatch.",
+    ),
+    snapshots_dir: Path = typer.Option(
+        DEFAULT_SNAPSHOTS_DIR,
+        "--snapshots-dir",
+        help="Directory holding per-scenario snapshot files (used with --snapshot).",
+    ),
+) -> None:
+    """Run scenarios and report pass/fail. With --baseline, compare to the saved baseline and gate on regressions."""
+    code = _execute_run_once(
+        config,
+        fail_severity,
+        baseline,
+        strict_baseline,
+        snapshot_compare=snapshot_compare,
+        snapshots_dir=snapshots_dir,
+    )
+    if code != 0:
+        raise typer.Exit(code=code)
+
+
+@app.command()
+def watch(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+    fail_severity: str = typer.Option(
+        "low",
+        "--fail-severity",
+        help="Exit non-zero only for failures at or above this severity (informational in watch mode; does not stop the loop).",
+    ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Optional path to a saved baseline. With --baseline, each run reports regressions.",
+    ),
+    strict_baseline: bool = typer.Option(
+        False,
+        "--strict-baseline",
+        help="Under --baseline, also treat drift / missing / new-failing as regressions.",
+    ),
+    snapshot_compare: bool = typer.Option(
+        False,
+        "--snapshot",
+        help="Compare observables against saved snapshots each re-run.",
+    ),
+    snapshots_dir: Path = typer.Option(
+        DEFAULT_SNAPSHOTS_DIR,
+        "--snapshots-dir",
+        help="Directory holding per-scenario snapshot files (used with --snapshot).",
+    ),
+    watch_path: list[Path] = typer.Option(
+        None,
+        "--watch",
+        help="Additional path to watch for changes. Repeat for multiple paths. The config file is always watched.",
+    ),
+    interval: float = typer.Option(
+        0.5,
+        "--interval",
+        help="Poll interval in seconds.",
+        min=0.05,
+        max=30.0,
+    ),
+) -> None:
+    """Watch the config (and --watch paths) and re-run scenarios when any change. Ctrl-C to stop."""
+    watched: list[Path] = [config]
+    if watch_path:
+        watched.extend(watch_path)
+    watched = [path.resolve() for path in watched]
+
+    def _once() -> int:
+        return _execute_run_once(
+            config,
+            fail_severity,
+            baseline,
+            strict_baseline,
+            snapshot_compare=snapshot_compare,
+            snapshots_dir=snapshots_dir,
+        )
+
+    run_watch(
+        watched,
+        run_once=_once,
+        interval=interval,
+        notify=lambda line: console.print(f"[bold cyan]{line}[/bold cyan]"),
+    )
+
+
+@snapshot_app.command("save")
+def snapshot_save_command(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+    snapshots_dir: Path = typer.Option(
+        DEFAULT_SNAPSHOTS_DIR,
+        "--snapshots-dir",
+        help="Directory to write per-scenario snapshot files into.",
+    ),
+) -> None:
+    """Record snapshots for every scenario that has ``snapshot: true``."""
+    try:
+        loaded = load_config(config)
+    except ConfigError as error:
+        console.print(f"[red]Invalid configuration:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    snapshot_ids = {
+        scenario.id
+        for scenario in loaded.scenario_definitions
+        if scenario.snapshot
+    }
+    if not snapshot_ids:
+        console.print(
+            "[yellow]No scenarios have `snapshot: true`.[/yellow] "
+            "Set the flag on the scenarios you want byte-exact regression gating for, "
+            "then re-run this command."
+        )
         raise typer.Exit(code=1)
+
+    resolved_config_path = config.resolve()
+    batch = asyncio.run(execute_run(loaded, resolved_config_path))
+    resolved_snapshots_dir = snapshots_dir.resolve()
+
+    written: list[Path] = []
+    for result in batch.results:
+        if result.scenario_id not in snapshot_ids:
+            continue
+        if result.status in {"error", "timeout"}:
+            console.print(
+                f"[yellow]Skipping {result.scenario_id}:[/yellow] "
+                f"result status is {result.status}."
+            )
+            continue
+        snap = build_snapshot(result)
+        out = snapshot_path_for(result.scenario_id, resolved_snapshots_dir)
+        write_snapshot(out, snap)
+        written.append(out)
+
+    if not written:
+        console.print(
+            "[red]No snapshots were written — every snapshot-enabled scenario "
+            "errored or timed out.[/red]"
+        )
+        raise typer.Exit(code=2)
+
+    console.print(
+        f"[green]Wrote {len(written)} snapshot(s) to[/green] "
+        f"{resolved_snapshots_dir}"
+    )
+    for path in written:
+        console.print(f"- {path}")
+
+
+@snapshot_app.command("show")
+def snapshot_show_command(
+    scenario_id: str = typer.Argument(
+        ..., help="Scenario id whose snapshot should be pretty-printed."
+    ),
+    snapshots_dir: Path = typer.Option(
+        DEFAULT_SNAPSHOTS_DIR,
+        "--snapshots-dir",
+        help="Directory holding per-scenario snapshot files.",
+    ),
+) -> None:
+    """Pretty-print a saved snapshot file."""
+    path = snapshot_path_for(scenario_id, snapshots_dir.resolve())
+    try:
+        snap = load_snapshot(path)
+    except SnapshotLoadError as error:
+        console.print(f"[red]Cannot load snapshot:[/red] {error}")
+        raise typer.Exit(code=2) from error
+
+    console.print(f"[green]Snapshot:[/green] {path}")
+    console.print(f"[green]Scenario:[/green] {snap.scenario_id}")
+    console.print(f"[green]Recorded:[/green] {snap.recorded_at}")
+    console.print(f"[green]TDDF version:[/green] {snap.tddf_version}")
+    console.print(f"[green]Observables:[/green] {len(snap.observables)}")
+    for index, observable in enumerate(snap.observables):
+        console.print(f"[bold]\\[{index}][/bold] {observable.type}")
+        dump = observable.model_dump(mode="json", exclude_none=True)
+        dump.pop("type", None)
+        for key, value in dump.items():
+            console.print(f"  {key}: {value}")
+
+
+@app.command("install-hook")
+def install_hook_command(
+    stage: str = typer.Option(
+        "pre-push",
+        "--stage",
+        help="Git hook stage. Use 'pre-push' (default, recommended) or 'pre-commit' (slower commit loop).",
+    ),
+    config: Path = typer.Option(
+        DEFAULT_CONFIG_PATH,
+        "--config",
+        help="Config path the installed hook will reference.",
+    ),
+    baseline: Path = typer.Option(
+        DEFAULT_BASELINE_PATH,
+        "--baseline",
+        help="Baseline path the installed hook will consult if it exists.",
+    ),
+    fail_severity: str = typer.Option(
+        "high",
+        "--fail-severity",
+        help="Severity gate the installed hook will use.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Overwrite an existing hook at this stage.",
+    ),
+) -> None:
+    """Install a native git hook (pre-push by default) that runs TDDF on each push / commit."""
+    if stage not in {"pre-push", "pre-commit"}:
+        console.print(
+            "[red]Invalid stage:[/red] choose 'pre-push' or 'pre-commit'."
+        )
+        raise typer.Exit(code=1)
+    if fail_severity not in SEVERITY_RANK:
+        console.print(
+            "[red]Invalid fail severity:[/red] choose one of critical, high, medium, low"
+        )
+        raise typer.Exit(code=1)
+
+    git_dir = Path(".git")
+    hooks_dir = git_dir / "hooks"
+    if not git_dir.is_dir():
+        console.print("[red]Not a git repository:[/red] no .git directory found.")
+        raise typer.Exit(code=1)
+    hooks_dir.mkdir(parents=True, exist_ok=True)
+
+    hook_path = hooks_dir / stage
+    if hook_path.exists() and not force:
+        console.print(
+            f"[red]Refusing to overwrite existing hook:[/red] {hook_path}"
+        )
+        console.print("Re-run with [bold]--force[/bold] to overwrite it.")
+        raise typer.Exit(code=1)
+
+    script = _render_hook_script(config, baseline, fail_severity)
+    hook_path.write_text(script)
+    hook_path.chmod(0o755)
+    console.print(
+        f"[green]Installed[/green] {stage} hook at [bold]{hook_path}[/bold]"
+    )
+    console.print(
+        f"  runs: tddf run --config {config} "
+        f"(with --baseline {baseline} if present) "
+        f"--fail-severity {fail_severity}"
+    )
+
+
+def _render_hook_script(
+    config: Path,
+    baseline: Path,
+    fail_severity: str,
+) -> str:
+    return (
+        "#!/usr/bin/env bash\n"
+        "# Installed by `tddf install-hook`. Safe to delete.\n"
+        "set -e\n"
+        "if ! command -v tddf >/dev/null 2>&1; then\n"
+        '    echo "tddf not in PATH — skipping TDDF hook" >&2\n'
+        "    exit 0\n"
+        "fi\n"
+        f'if [ -f "{baseline}" ]; then\n'
+        f'    exec tddf run --config "{config}" --baseline "{baseline}" '
+        f'--fail-severity "{fail_severity}"\n'
+        "else\n"
+        f'    exec tddf run --config "{config}" --fail-severity "{fail_severity}"\n'
+        "fi\n"
+    )
+
+
+@baseline_app.command("save")
+def baseline_save_command(
+    config: Path = typer.Option(DEFAULT_CONFIG_PATH, "--config", exists=False),
+    baseline: Path = typer.Option(
+        DEFAULT_BASELINE_PATH,
+        "--baseline",
+        help="Path to write the baseline file.",
+    ),
+    include_errors: bool = typer.Option(
+        False,
+        "--include-errors",
+        help="Save the baseline even if some scenarios errored or timed out (not recommended).",
+    ),
+) -> None:
+    """Run all scenarios once and save the results as a new baseline for future regression detection."""
+    try:
+        loaded = load_config(config)
+    except ConfigError as error:
+        console.print(f"[red]Invalid configuration:[/red] {error}")
+        raise typer.Exit(code=1) from error
+
+    resolved_config_path = config.resolve()
+    batch = asyncio.run(execute_run(loaded, resolved_config_path))
+
+    git_commit = detect_git_commit(cwd=resolved_config_path.parent)
+    try:
+        baseline_file = build_baseline(
+            batch, loaded, git_commit=git_commit, include_errors=include_errors
+        )
+    except BaselineBuildError as error:
+        console.print(f"[red]Baseline not saved:[/red] {error}")
+        raise typer.Exit(code=2) from error
+
+    resolved_baseline_path = baseline.resolve()
+    write_baseline(resolved_baseline_path, baseline_file)
+
+    passed = sum(
+        1 for entry in baseline_file.scenarios.values() if entry.status == "passed"
+    )
+    failed = sum(
+        1 for entry in baseline_file.scenarios.values() if entry.status == "failed"
+    )
+    console.print(
+        f"[green]Saved baseline[/green] for {len(baseline_file.scenarios)} scenario(s) "
+        f"to {resolved_baseline_path}"
+    )
+    if git_commit:
+        console.print(f"[green]Git commit:[/green] {git_commit}")
+    console.print(
+        f"[green]Baseline status:[/green] {passed} passed, {failed} failed"
+    )
+
+
+@baseline_app.command("show")
+def baseline_show_command(
+    baseline: Path = typer.Option(
+        DEFAULT_BASELINE_PATH,
+        "--baseline",
+        help="Path to the baseline file.",
+    ),
+) -> None:
+    """Pretty-print a saved baseline."""
+    resolved = baseline.resolve()
+    try:
+        baseline_file = load_baseline(resolved)
+    except BaselineLoadError as error:
+        console.print(f"[red]Cannot load baseline:[/red] {error}")
+        raise typer.Exit(code=2) from error
+
+    print_baseline_file(baseline_file, resolved)
 
 
 @app.command()
@@ -290,7 +749,7 @@ def assess(
         help="Optional path to write the generated assessment config for reproducibility.",
     ),
 ) -> None:
-    """Point TDDF at your agent and let it figure out what to test — no manual scenario authoring needed."""
+    """Probe an agent's capabilities and generate a starter scenario set — useful for bootstrapping a regression suite."""
     if fail_severity not in SEVERITY_RANK:
         console.print(
             "[red]Invalid fail severity:[/red] choose one of critical, high, medium, low"

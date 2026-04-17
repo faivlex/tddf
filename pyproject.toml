@@ -1,11 +1,11 @@
 [project]
 name = "tddf"
 version = "2026.4.1"
-description = "Test whether your AI agent can be tricked into leaking data"
+description = "Behaviour regression tests for AI agents — deterministic, local-first, framework-agnostic"
 readme = "README.md"
 license = "MIT"
 requires-python = ">=3.12"
-keywords = ["agents", "security", "mcp", "prompt-injection", "red-teaming"]
+keywords = ["agents", "testing", "ci", "regression", "mcp", "prompt-injection"]
 classifiers = [
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.12",
@@ -38,6 +38,9 @@ dev = [
 [build-system]
 requires = ["hatchling>=1.27.0"]
 build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/tddf"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

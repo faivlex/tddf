@@ -1,6 +1,6 @@
 # GitHub Actions
 
-Catch agent security regressions in CI. TDDF ships a reusable composite GitHub Action that validates your config, runs your trap scenarios, uploads artifacts, and fails the build when a scenario breaches your severity threshold.
+Gate PRs on agent behaviour regressions. TDDF ships a reusable composite GitHub Action that validates your config, runs your scenarios, uploads JUnit + artifacts, and fails the build when a scenario breaches your severity threshold.
 
 ## Example
 
@@ -33,6 +33,28 @@ jobs:
 
 Pin to a specific release tag for reproducibility.
 
+## Regression Mode
+
+For the strongest signal on PRs, point TDDF at a committed baseline:
+
+```bash
+tddf baseline save        # once, on a known-good commit, then commit .tddf/baseline.json
+```
+
+Then in CI, run against the baseline so you only fail the build on genuine regressions:
+
+```yaml
+- uses: gonzalosr/tddf@v1
+  with:
+    config: tddf.yaml
+    fail-severity: high
+    extra-args: --baseline .tddf/baseline.json
+```
+
+The action writes a `baseline-diff.json` alongside other artifacts so you can render the diff in PR comments.
+
+`extra-args` is a free-form pass-through — use it for `--baseline`, `--snapshot`, `--strict-baseline`, `--snapshots-dir`, or any other `tddf run` flag that emerges in later releases.
+
 ## What It Does
 
 The action:
@@ -56,6 +78,7 @@ The action:
 | `upload-artifacts` | `true` | Upload artifacts to GitHub |
 | `artifact-name` | `tddf-artifacts` | Uploaded artifact name |
 | `validate` | `true` | Run `tddf validate` before execution |
+| `extra-args` | `""` | Extra flags appended to `tddf run` (e.g. `--baseline .tddf/baseline.json --snapshot`) |
 
 ## Artifacts And Failure Semantics
 

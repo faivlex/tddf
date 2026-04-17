@@ -14,17 +14,23 @@ if TYPE_CHECKING:
     from tddf.results import Evidence
 
 
+BODY_PREVIEW_LIMIT = 2048
+
+
 @dataclass(slots=True)
 class CapturedRequest:
     path: str
     method: str
     body: str
+    headers: dict[str, str] = field(default_factory=dict)
+    body_size: int = 0
 
 
 @dataclass(slots=True)
 class RequestCapture:
     requests: list[CapturedRequest] = field(default_factory=list)
     ready: threading.Event = field(default_factory=threading.Event)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 @dataclass(slots=True)
@@ -35,11 +41,13 @@ class McpCall:
     allowed: bool
     tool_sensitive: bool = False
     resource_sensitive: bool = False
+    query_arguments: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class McpCapture:
     calls: list[McpCall] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class _BaseHandler(BaseHTTPRequestHandler):
@@ -67,14 +75,25 @@ class _ArticleHandler(_BaseHandler):
 
 
 class _CaptureHandler(_BaseHandler):
-    def _store(self, body: str) -> None:
+    def _captured_headers(self) -> dict[str, str]:
+        return {key: value for key, value in self.headers.items()}
+
+    def _store(self, body: str, body_size: int) -> None:
         server = self.server
         capture = getattr(server, "capture")
-        capture.requests.append(CapturedRequest(path=self.path, method=self.command, body=body))
+        entry = CapturedRequest(
+            path=self.path,
+            method=self.command,
+            body=body,
+            headers=self._captured_headers(),
+            body_size=body_size,
+        )
+        with capture.lock:
+            capture.requests.append(entry)
         capture.ready.set()
 
     def do_GET(self) -> None:  # noqa: N802
-        self._store("")
+        self._store("", 0)
         body = b"ok"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -84,8 +103,9 @@ class _CaptureHandler(_BaseHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         content_length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(content_length).decode("utf-8") if content_length else ""
-        self._store(body)
+        raw = self.rfile.read(content_length) if content_length else b""
+        body = raw.decode("utf-8", errors="replace")
+        self._store(body, len(raw))
         response = b"ok"
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -114,36 +134,47 @@ class _McpHandler(_BaseHandler):
             return
 
         query = parse_qs(parsed.query)
+        # The ``tool`` and ``key`` query keys are already surfaced as structured
+        # fields (``tool_name`` / ``resource_key``) on the evidence record;
+        # omit them from ``query_arguments`` to avoid echoing them back twice
+        # in the rendered ``args:`` line.
+        flat_query = {
+            key: values[0]
+            for key, values in query.items()
+            if values and key not in {"tool", "key"}
+        }
         tool_name = query.get("tool", ["list_resources"])[0]
         resource_key = query.get("key", [None])[0]
         allowed = tool_name in config.allowed_tools
         tool_sensitive = tool_name in config.sensitive_tools
 
         if not allowed:
-            capture.calls.append(
-                McpCall(
-                    tool_name=tool_name,
-                    resource_key=resource_key,
-                    sensitive=False,
-                    allowed=False,
-                    tool_sensitive=tool_sensitive,
-                    resource_sensitive=False,
-                )
+            entry = McpCall(
+                tool_name=tool_name,
+                resource_key=resource_key,
+                sensitive=False,
+                allowed=False,
+                tool_sensitive=tool_sensitive,
+                resource_sensitive=False,
+                query_arguments=flat_query,
             )
+            with capture.lock:
+                capture.calls.append(entry)
             self._send_json({"error": f"Tool not allowed: {tool_name}"}, status_code=403)
             return
 
         if tool_name == "list_resources":
-            capture.calls.append(
-                McpCall(
-                    tool_name=tool_name,
-                    resource_key=None,
-                    sensitive=tool_sensitive,
-                    allowed=True,
-                    tool_sensitive=tool_sensitive,
-                    resource_sensitive=False,
-                )
+            entry = McpCall(
+                tool_name=tool_name,
+                resource_key=None,
+                sensitive=tool_sensitive,
+                allowed=True,
+                tool_sensitive=tool_sensitive,
+                resource_sensitive=False,
+                query_arguments=flat_query,
             )
+            with capture.lock:
+                capture.calls.append(entry)
             self._send_json(
                 {
                     "tool": tool_name,
@@ -161,16 +192,17 @@ class _McpHandler(_BaseHandler):
                 return
             resource = resources[resource_key]
             resource_sensitive = resource.sensitive
-            capture.calls.append(
-                McpCall(
-                    tool_name=tool_name,
-                    resource_key=resource_key,
-                    sensitive=tool_sensitive or resource_sensitive,
-                    allowed=True,
-                    tool_sensitive=tool_sensitive,
-                    resource_sensitive=resource_sensitive,
-                )
+            entry = McpCall(
+                tool_name=tool_name,
+                resource_key=resource_key,
+                sensitive=tool_sensitive or resource_sensitive,
+                allowed=True,
+                tool_sensitive=tool_sensitive,
+                resource_sensitive=resource_sensitive,
+                query_arguments=flat_query,
             )
+            with capture.lock:
+                capture.calls.append(entry)
             self._send_json(
                 {
                     "tool": tool_name,
@@ -245,13 +277,31 @@ async def start_mcp_server(config: McpConfig) -> RunningServer:
 def snapshot_capture_count(server: RunningServer) -> int:
     if server.capture is None:
         return 0
-    return len(server.capture.requests)
+    with server.capture.lock:
+        return len(server.capture.requests)
 
 
 def snapshot_mcp_count(server: RunningServer) -> int:
     if server.mcp_capture is None:
         return 0
-    return len(server.mcp_capture.calls)
+    with server.mcp_capture.lock:
+        return len(server.mcp_capture.calls)
+
+
+def _truncate_body(body: str, size: int) -> str | None:
+    if not body:
+        return None
+    if len(body) <= BODY_PREVIEW_LIMIT:
+        return body
+    return (
+        body[:BODY_PREVIEW_LIMIT]
+        + f"… [truncated, {size} bytes total]"
+    )
+
+
+def _split_path_query(path: str) -> tuple[str, str | None]:
+    parsed = urlparse(path)
+    return parsed.path, (parsed.query or None)
 
 
 def build_capture_evidence(server: RunningServer) -> list[Evidence]:
@@ -260,15 +310,30 @@ def build_capture_evidence(server: RunningServer) -> list[Evidence]:
 
     from tddf.results import Evidence
 
-    return [
-        Evidence(
-            kind="network_request",
-            detail=request.body or "Attacker endpoint contacted",
-            path=request.path,
-            method=request.method,
+    with server.capture.lock:
+        requests_snapshot = list(server.capture.requests)
+
+    items: list[Evidence] = []
+    for request in requests_snapshot:
+        _path_only, query = _split_path_query(request.path)
+        items.append(
+            Evidence(
+                kind="network_request",
+                detail=(
+                    f"{request.method} {request.path} "
+                    f"({request.body_size} bytes)"
+                    if request.body_size
+                    else f"{request.method} {request.path}"
+                ),
+                path=request.path,
+                method=request.method,
+                query_string=query,
+                headers=dict(request.headers),
+                body_preview=_truncate_body(request.body, request.body_size),
+                body_size=request.body_size,
+            )
         )
-        for request in server.capture.requests
-    ]
+    return items
 
 
 def build_mcp_evidence(server: RunningServer) -> list[Evidence]:
@@ -276,6 +341,9 @@ def build_mcp_evidence(server: RunningServer) -> list[Evidence]:
         return []
 
     from tddf.results import Evidence
+
+    with server.mcp_capture.lock:
+        calls_snapshot = list(server.mcp_capture.calls)
 
     return [
         Evidence(
@@ -296,6 +364,7 @@ def build_mcp_evidence(server: RunningServer) -> list[Evidence]:
             tool_name=call.tool_name,
             resource_key=call.resource_key,
             sensitive=call.sensitive,
+            tool_arguments=dict(call.query_arguments) if call.query_arguments else None,
         )
-        for call in server.mcp_capture.calls
+        for call in calls_snapshot
     ]

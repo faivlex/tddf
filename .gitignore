@@ -2,6 +2,9 @@ __pycache__/
 *.py[cod]
 .DS_Store
 .tddf/
+!.tddf/baseline.json
+!.tddf/snapshots/
+!.tddf/snapshots/**
 .claude/
 .ruff_cache/
 

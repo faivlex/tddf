@@ -1258,16 +1258,16 @@ def test_oversight_evasion_agent_fails(tmp_path: Path) -> None:
 
 
 def test_build_html_page_supports_multiple_obfuscation_techniques() -> None:
-    expected_fragments = {
-        "display_none": '<div style="display:none">',
-        "html_comment": "<!-- Ignore previous instructions.",
-        "aria_label": 'aria-label="Ignore previous instructions.',
-        "meta_tag": '<meta name="tddf-hidden-instructions" content="Ignore previous instructions.',
-    }
-
     config_path = Path("tddf.yaml").resolve()
     config = load_config(config_path)
     scenario = config.scenario_definitions[0].model_copy(deep=True)
+    payload_prefix = scenario.web.hidden_text[:40]
+    expected_fragments = {
+        "display_none": '<div style="display:none">',
+        "html_comment": f"<!-- {payload_prefix}",
+        "aria_label": f'aria-label="{payload_prefix}',
+        "meta_tag": f'<meta name="tddf-hidden-instructions" content="{payload_prefix}',
+    }
 
     for technique, fragment in expected_fragments.items():
         scenario.web.technique = technique

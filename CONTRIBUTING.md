@@ -11,10 +11,12 @@ uv sync --group dev
 uv run pytest
 ```
 
+TDDF is a deterministic, local-first regression harness for AI agents — think `pytest` for agent safety behaviour. Contributions should preserve that shape: scenarios in YAML, evaluation without an LLM judge, no cloud dependency.
+
 ## What's useful
 
-- **New trap scenarios** — especially for attack patterns not yet covered
-- **New delivery strategies** — encoding or obfuscation techniques
+- **New scenarios** — behaviour patterns not yet covered
+- **New delivery strategies** — encoding or obfuscation techniques that multiply existing trap families
 - **New adapters** — framework-specific target integrations
 - **Bug fixes** — with a test that reproduces the issue
 - **Documentation** — typos, clarity, missing examples

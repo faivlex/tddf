@@ -19,6 +19,22 @@ class Evidence:
     tool_name: str | None = None
     resource_key: str | None = None
     sensitive: bool | None = None
+    query_string: str | None = None
+    headers: dict[str, str] | None = None
+    body_preview: str | None = None
+    body_size: int | None = None
+    tool_arguments: dict[str, str] | None = None
+    leaked_secrets: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class PlantedPayload:
+    surface: str
+    location: str | None = None
+    hidden_text: str | None = None
+    technique: str | None = None
+    payload_id: str | None = None
+    payload_source: str | None = None
 
 
 @dataclass(slots=True)
@@ -73,18 +89,15 @@ class RunResult:
     duration_seconds: float | None = None
     evidence: list[Evidence] = field(default_factory=list)
     step_evidence: list[StepEvidence] = field(default_factory=list)
+    planted_payloads: list[PlantedPayload] = field(default_factory=list)
     stdout: str = ""
     stderr: str = ""
     adapter_artifact_contents: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, object]:
-        payload = asdict(self)
-        payload["evidence"] = [asdict(item) for item in self.evidence]
-        payload["step_evidence"] = [
-            {**asdict(step), "evidence": [asdict(e) for e in step.evidence]}
-            for step in self.step_evidence
-        ]
-        return payload
+        # ``dataclasses.asdict`` already recurses through nested dataclasses
+        # and preserves ``list``/``dict`` shapes, so a plain call is enough.
+        return asdict(self)
 
     def write_artifacts(self, artifacts_dir: Path) -> ArtifactBundle:
         run_dir = artifacts_dir / self.run_id / self.scenario_id
