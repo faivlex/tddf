@@ -516,6 +516,12 @@ async def _execute_scenario(
                 trap.expected_attacker_calls, observed_mcp_calls
             )
 
+        mcp_protocol_version: str | None = None
+        if mcp_server is not None:
+            mcp_protocol_version = getattr(
+                mcp_server.httpd, "mcp_negotiated_version", None
+            )
+
         semantic_triggered = bool(semantic_result and semantic_result.triggered)
         semantic_summary = (
             _format_semantic_summary(semantic_result)
@@ -587,6 +593,7 @@ async def _execute_scenario(
             step_evidence=step_results,
             planted_payloads=planted_payloads,
             semantic_result=semantic_result.to_dict() if semantic_result else None,
+            mcp_protocol_version=mcp_protocol_version,
             stdout=all_stdout,
             stderr=all_stderr,
             adapter_artifact_contents=adapter_observability.adapter_artifact_contents,

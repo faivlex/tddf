@@ -698,6 +698,12 @@ class McpToolConfig(BaseModel):
     ``{arg_name}`` tokens in ``response_template`` with the caller's
     argument values, and returns the rendered JSON. ``sensitive=True``
     is equivalent to listing the tool in ``McpConfig.sensitive_tools``.
+
+    When the real-MCP handler builds the tool's ``inputSchema`` for
+    ``tools/list``, ``parameters`` is converted to a minimal JSON Schema
+    (all strings, all required). Authors who need richer schema
+    (numbers, enums, nested objects) can supply ``input_schema`` as an
+    escape hatch; when present it is returned as-is.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -706,6 +712,9 @@ class McpToolConfig(BaseModel):
     parameters: list[str] = Field(default_factory=list)
     response_template: str = '{"status": "ok"}'
     sensitive: bool = False
+    description: str | None = None
+    parameter_descriptions: dict[str, str] = Field(default_factory=dict)
+    input_schema: dict[str, object] | None = None
 
 
 class McpConfig(BaseModel):

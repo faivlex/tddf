@@ -140,6 +140,72 @@ class _McpHandler(_BaseHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_empty(self, status_code: int = 204) -> None:
+        self.send_response(status_code)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def do_POST(self) -> None:  # noqa: N802
+        """Handle an MCP JSON-RPC 2.0 request (streamable-HTTP transport).
+
+        Reads a single JSON-RPC request from the body, dispatches it via the
+        method handlers in ``tddf.mcp_protocol``, and writes the response as
+        a single JSON object. Notifications (requests without an ``id``)
+        receive a 204 No Content response per the HTTP MCP transport.
+        """
+        parsed = urlparse(self.path)
+        config: McpConfig = getattr(self.server, "mcp_config")
+        if parsed.path != config.endpoint_path:
+            self.send_error(404)
+            return
+
+        # Deferred import to keep the module graph layered — protocol depends
+        # on this module's McpCall / McpCapture types.
+        from tddf.mcp_protocol import (
+            JsonRpcResponse,
+            ServerState,
+            dispatch,
+            parse_jsonrpc_request,
+        )
+
+        content_length = int(self.headers.get("Content-Length", "0"))
+        raw = self.rfile.read(content_length).decode("utf-8") if content_length else ""
+
+        capture: McpCapture = getattr(self.server, "mcp_capture")
+        resources: dict[str, McpResourceConfig] = getattr(
+            self.server, "mcp_resources"
+        )
+        state = ServerState(config=config, resources=resources, capture=capture)
+        # Preserve any previously-negotiated protocol version across requests
+        # on the same server — the handler may be invoked per-request, but
+        # the server object persists the negotiated value for the run.
+        negotiated = getattr(self.server, "mcp_negotiated_version", None)
+        if negotiated:
+            state.negotiated_protocol_version = negotiated
+
+        request, parse_error = parse_jsonrpc_request(raw)
+        if parse_error is not None:
+            response = JsonRpcResponse(id=None, error=parse_error)
+            self._send_json(response.to_dict(), status_code=400)
+            return
+
+        assert request is not None
+        response = dispatch(request, state)
+
+        # Persist any negotiated protocol version back onto the server.
+        if state.negotiated_protocol_version:
+            setattr(
+                self.server,
+                "mcp_negotiated_version",
+                state.negotiated_protocol_version,
+            )
+
+        if response is None:
+            # JSON-RPC notification — no response body per spec.
+            self._send_empty(status_code=204)
+            return
+        self._send_json(response.to_dict())
+
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
         capture: McpCapture = getattr(self.server, "mcp_capture")

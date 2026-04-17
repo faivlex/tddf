@@ -1,0 +1,427 @@
+"""JSON-RPC 2.0 core + MCP method dispatch.
+
+TDDF's mock MCP surface previously accepted a homegrown HTTP shape
+(``GET /mcp?tool=<name>&<args>``). This module adds real MCP protocol
+handling: JSON-RPC 2.0 envelopes, the five methods TDDF supports
+(``initialize`` / ``tools/list`` / ``tools/call`` / ``resources/list`` /
+``resources/read``), and a dispatch function the transport layer calls
+for each incoming request.
+
+The plain-HTTP query-param path is preserved at the transport layer for
+backward-compatibility with fixture agents and pedagogical examples.
+"""
+
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass, field
+from typing import Any
+
+from tddf.config import McpConfig, McpResourceConfig, McpToolConfig
+from tddf.servers import McpCall, McpCapture, _render_tool_response
+
+
+# TDDF-declared server metadata returned on ``initialize``.
+TDDF_MCP_SERVER_NAME = "tddf-mock"
+TDDF_MCP_SERVER_VERSION = "1"
+
+# Protocol versions TDDF advertises support for (newest first). MCP clients
+# negotiate by offering their preferred version; TDDF echoes back the first
+# one in this list that the client also supports, or the client's offered
+# version if that's the only thing we can do.
+_SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
+
+
+# JSON-RPC 2.0 standard error codes.
+ERROR_PARSE = -32700
+ERROR_INVALID_REQUEST = -32600
+ERROR_METHOD_NOT_FOUND = -32601
+ERROR_INVALID_PARAMS = -32602
+ERROR_INTERNAL = -32603
+
+
+@dataclass(slots=True)
+class JsonRpcError:
+    code: int
+    message: str
+    data: dict[str, Any] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"code": self.code, "message": self.message}
+        if self.data is not None:
+            payload["data"] = self.data
+        return payload
+
+
+@dataclass(slots=True)
+class JsonRpcResponse:
+    id: int | str | None
+    result: dict[str, Any] | None = None
+    error: JsonRpcError | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {"jsonrpc": "2.0", "id": self.id}
+        if self.error is not None:
+            payload["error"] = self.error.to_dict()
+        else:
+            payload["result"] = self.result or {}
+        return payload
+
+
+@dataclass(slots=True)
+class ServerState:
+    """State the dispatcher needs access to on every request."""
+
+    config: McpConfig
+    resources: dict[str, McpResourceConfig]
+    capture: McpCapture
+    negotiated_protocol_version: str | None = field(default=None)
+
+
+def parse_jsonrpc_request(raw: str) -> tuple[dict[str, Any] | None, JsonRpcError | None]:
+    """Return ``(parsed, None)`` on success or ``(None, error)`` if the bytes
+    are not a well-formed JSON-RPC 2.0 request."""
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        return None, JsonRpcError(ERROR_PARSE, f"Parse error: {exc}")
+    if not isinstance(data, dict):
+        return None, JsonRpcError(
+            ERROR_INVALID_REQUEST,
+            "Invalid Request: top-level JSON must be an object",
+        )
+    if data.get("jsonrpc") != "2.0":
+        return None, JsonRpcError(
+            ERROR_INVALID_REQUEST,
+            "Invalid Request: missing or non-'2.0' jsonrpc field",
+        )
+    if "method" not in data or not isinstance(data["method"], str):
+        return None, JsonRpcError(
+            ERROR_INVALID_REQUEST,
+            "Invalid Request: missing or non-string method field",
+        )
+    return data, None
+
+
+def dispatch(
+    request: dict[str, Any], state: ServerState
+) -> JsonRpcResponse | None:
+    """Dispatch a parsed JSON-RPC request to its method handler.
+
+    Returns ``None`` for JSON-RPC *notifications* (requests without an
+    ``id`` field — no response is expected). Returns a ``JsonRpcResponse``
+    for requests.
+    """
+    request_id = request.get("id")
+    is_notification = "id" not in request
+    method = request["method"]
+    params = request.get("params") or {}
+
+    try:
+        handler = _METHOD_HANDLERS.get(method)
+        if handler is None:
+            if is_notification:
+                # Unknown notifications are silently ignored per spec.
+                return None
+            return JsonRpcResponse(
+                id=request_id,
+                error=JsonRpcError(
+                    ERROR_METHOD_NOT_FOUND, f"Method not found: {method}"
+                ),
+            )
+        result = handler(params, state)
+    except InvalidParams as exc:
+        if is_notification:
+            return None
+        return JsonRpcResponse(
+            id=request_id,
+            error=JsonRpcError(ERROR_INVALID_PARAMS, str(exc)),
+        )
+    except Exception as exc:  # noqa: BLE001 — surfacing internal errors
+        if is_notification:
+            return None
+        return JsonRpcResponse(
+            id=request_id,
+            error=JsonRpcError(ERROR_INTERNAL, f"Internal error: {exc}"),
+        )
+
+    if is_notification:
+        return None
+    return JsonRpcResponse(id=request_id, result=result)
+
+
+class InvalidParams(ValueError):
+    """Raised inside a method handler to signal bad params — dispatched to
+    JSON-RPC error code -32602."""
+
+
+# ---------------------------------------------------------------------------
+# Method handlers.
+# ---------------------------------------------------------------------------
+
+
+def _handle_initialize(params: dict[str, Any], state: ServerState) -> dict[str, Any]:
+    client_version = params.get("protocolVersion")
+    # Negotiate: echo the client's version if we support it; otherwise pick
+    # our newest and let the client decide whether to proceed.
+    if isinstance(client_version, str) and client_version in _SUPPORTED_PROTOCOL_VERSIONS:
+        negotiated = client_version
+    else:
+        negotiated = _SUPPORTED_PROTOCOL_VERSIONS[0]
+    state.negotiated_protocol_version = negotiated
+    return {
+        "protocolVersion": negotiated,
+        "capabilities": {"tools": {}, "resources": {}},
+        "serverInfo": {
+            "name": TDDF_MCP_SERVER_NAME,
+            "version": TDDF_MCP_SERVER_VERSION,
+        },
+    }
+
+
+def _handle_tools_list(params: dict[str, Any], state: ServerState) -> dict[str, Any]:
+    tools = [_tool_descriptor(tool) for tool in state.config.tools]
+    # Expose the legacy built-in tools too so MCP clients see the full
+    # surface the handler supports.
+    builtin = _builtin_tool_descriptors(state.config)
+    return {"tools": builtin + tools}
+
+
+def _handle_tools_call(
+    params: dict[str, Any], state: ServerState
+) -> dict[str, Any]:
+    name = params.get("name")
+    if not isinstance(name, str):
+        raise InvalidParams("tools/call requires a string 'name' field")
+    raw_args = params.get("arguments") or {}
+    if not isinstance(raw_args, dict):
+        raise InvalidParams("tools/call 'arguments' must be an object")
+    arguments = {str(k): str(v) for k, v in raw_args.items()}
+
+    sensitive = state.config.is_sensitive_tool(name)
+
+    # Built-in surface stays as-is.
+    if name == "list_resources":
+        return _call_list_resources(state, arguments, sensitive)
+    if name == "read_resource":
+        return _call_read_resource(state, arguments, sensitive)
+
+    custom_tool = next(
+        (tool for tool in state.config.tools if tool.name == name), None
+    )
+    if custom_tool is None:
+        # Record the disallowed attempt so evaluators can still see it.
+        _record_call(
+            state,
+            McpCall(
+                tool_name=name,
+                resource_key=None,
+                sensitive=sensitive,
+                allowed=False,
+                tool_sensitive=sensitive,
+                resource_sensitive=False,
+                query_arguments=arguments,
+            ),
+        )
+        return _text_content(
+            f"Tool not allowed: {name}", is_error=True
+        )
+
+    rendered = _render_tool_response(custom_tool.response_template, arguments)
+    _record_call(
+        state,
+        McpCall(
+            tool_name=name,
+            resource_key=None,
+            sensitive=sensitive,
+            allowed=True,
+            tool_sensitive=sensitive,
+            resource_sensitive=False,
+            query_arguments=arguments,
+        ),
+    )
+    return _text_content(rendered)
+
+
+def _handle_resources_list(
+    params: dict[str, Any], state: ServerState
+) -> dict[str, Any]:
+    entries = [
+        {
+            "uri": f"mcp://tddf/{resource.key}",
+            "name": resource.key,
+            "description": None,
+            "mimeType": "application/json",
+        }
+        for resource in state.resources.values()
+    ]
+    return {"resources": entries}
+
+
+def _handle_resources_read(
+    params: dict[str, Any], state: ServerState
+) -> dict[str, Any]:
+    uri = params.get("uri")
+    if not isinstance(uri, str):
+        raise InvalidParams("resources/read requires a string 'uri' field")
+    # Accept either ``mcp://tddf/<key>`` or bare ``<key>`` for ergonomic wins.
+    key = uri.split("/")[-1] if "://" in uri else uri
+    resource = state.resources.get(key)
+    if resource is None:
+        raise InvalidParams(f"Unknown resource: {uri}")
+    sensitive = state.config.is_sensitive_tool("read_resource") or resource.sensitive
+    _record_call(
+        state,
+        McpCall(
+            tool_name="read_resource",
+            resource_key=key,
+            sensitive=sensitive,
+            allowed=True,
+            tool_sensitive=state.config.is_sensitive_tool("read_resource"),
+            resource_sensitive=resource.sensitive,
+            query_arguments={"key": key},
+        ),
+    )
+    return {
+        "contents": [
+            {
+                "uri": uri,
+                "mimeType": "application/json",
+                "text": json.dumps(
+                    {
+                        "key": resource.key,
+                        "value": resource.value,
+                        "sensitive": resource.sensitive,
+                    }
+                ),
+            }
+        ]
+    }
+
+
+_METHOD_HANDLERS = {
+    "initialize": _handle_initialize,
+    "tools/list": _handle_tools_list,
+    "tools/call": _handle_tools_call,
+    "resources/list": _handle_resources_list,
+    "resources/read": _handle_resources_read,
+}
+
+
+# ---------------------------------------------------------------------------
+# Helpers for method handlers.
+# ---------------------------------------------------------------------------
+
+
+def _tool_descriptor(tool: McpToolConfig) -> dict[str, Any]:
+    """Build an MCP tools/list entry for a configured tool."""
+    if tool.input_schema is not None:
+        schema = dict(tool.input_schema)
+    else:
+        properties: dict[str, dict[str, Any]] = {}
+        for parameter in tool.parameters:
+            entry: dict[str, Any] = {"type": "string"}
+            if tool.parameter_descriptions.get(parameter):
+                entry["description"] = tool.parameter_descriptions[parameter]
+            properties[parameter] = entry
+        schema = {
+            "type": "object",
+            "properties": properties,
+            "required": list(tool.parameters),
+        }
+    descriptor: dict[str, Any] = {"name": tool.name, "inputSchema": schema}
+    if tool.description:
+        descriptor["description"] = tool.description
+    return descriptor
+
+
+def _builtin_tool_descriptors(config: McpConfig) -> list[dict[str, Any]]:
+    """Descriptors for ``list_resources`` / ``read_resource`` so real MCP
+    clients can discover the legacy surface via ``tools/list``."""
+    return [
+        {
+            "name": "list_resources",
+            "description": "List MCP resources declared in the TDDF config.",
+            "inputSchema": {"type": "object", "properties": {}, "required": []},
+        },
+        {
+            "name": "read_resource",
+            "description": "Read a named MCP resource by its key.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"key": {"type": "string"}},
+                "required": ["key"],
+            },
+        },
+    ]
+
+
+def _call_list_resources(
+    state: ServerState, arguments: dict[str, str], sensitive: bool
+) -> dict[str, Any]:
+    _record_call(
+        state,
+        McpCall(
+            tool_name="list_resources",
+            resource_key=None,
+            sensitive=sensitive,
+            allowed=True,
+            tool_sensitive=sensitive,
+            resource_sensitive=False,
+            query_arguments=arguments,
+        ),
+    )
+    payload = {
+        "tool": "list_resources",
+        "resources": [
+            {"key": resource.key, "sensitive": resource.sensitive}
+            for resource in state.resources.values()
+        ],
+    }
+    return _text_content(json.dumps(payload))
+
+
+def _call_read_resource(
+    state: ServerState, arguments: dict[str, str], tool_sensitive: bool
+) -> dict[str, Any]:
+    key = arguments.get("key")
+    if not key:
+        raise InvalidParams("read_resource requires a 'key' argument")
+    resource = state.resources.get(key)
+    if resource is None:
+        raise InvalidParams(f"Unknown resource: {key}")
+    sensitive = tool_sensitive or resource.sensitive
+    _record_call(
+        state,
+        McpCall(
+            tool_name="read_resource",
+            resource_key=key,
+            sensitive=sensitive,
+            allowed=True,
+            tool_sensitive=tool_sensitive,
+            resource_sensitive=resource.sensitive,
+            query_arguments=arguments,
+        ),
+    )
+    payload = {
+        "tool": "read_resource",
+        "resource": {
+            "key": resource.key,
+            "value": resource.value,
+            "sensitive": resource.sensitive,
+        },
+    }
+    return _text_content(json.dumps(payload))
+
+
+def _record_call(state: ServerState, entry: McpCall) -> None:
+    with state.capture.lock:
+        state.capture.calls.append(entry)
+
+
+def _text_content(text: str, *, is_error: bool = False) -> dict[str, Any]:
+    """Wrap a string in MCP's ``tools/call`` response envelope."""
+    return {
+        "content": [{"type": "text", "text": text}],
+        "isError": is_error,
+    }

@@ -245,6 +245,30 @@ TDDF fails the scenario when every expected call is observed with the specified 
 
 The semantic check composes **additively** with the structural one: if either trips, the scenario fails. Scenarios with `expected_attacker_calls` also fingerprint tool arguments canonically in their baselines, so baseline diffs catch arg drift the default lossy fingerprint would miss.
 
+### MCP integration
+
+Scenarios that check tool abuse need TDDF to observe what the agent calls. TDDF ships a **mock MCP server** that stands in for the one your agent would otherwise talk to — every tool invocation lands on the mock, TDDF records it with its arguments, and the evaluators decide pass/fail.
+
+Declare the tools your scenarios need under `mcp.tools`:
+
+```yaml
+mcp:
+  enabled: true
+  tools:
+    - name: get_contact
+      parameters: [name]
+      response_template: '{"name":"{name}","phone":"555-1234"}'
+    - name: send_email
+      parameters: [to, body]
+      response_template: '{"id":"msg_001","status":"sent"}'
+```
+
+TDDF speaks **Model Context Protocol** (JSON-RPC 2.0) over **streamable HTTP**. Any HTTP-capable MCP client — LangGraph with MCP tools, the OpenAI Agents SDK with MCP, or any agent you wire up via Anthropic's Python MCP SDK — can point at `TDDF_MCP_URL` and its tool calls are recorded automatically. The negotiated protocol version lands on each run artefact so auditors can confirm which contract the run ran against.
+
+A plain-HTTP query-param fallback (`GET <TDDF_MCP_URL>?tool=<name>&<arg>=<value>`) is also supported for fixture agents that don't need a full MCP client — useful for quick tests where setting up one would be overkill.
+
+**Stdio transport** — the dominant MCP transport for Claude Agent SDK — is coming in the next release. Until then, Claude Agent SDK scenarios work through the structural evaluator (HTTP-to-attacker-endpoint); the semantic evaluator requires the agent to be reachable through TDDF's HTTP surface.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). PRs welcome — especially new scenarios, delivery strategies, and adapters.
