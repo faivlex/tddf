@@ -109,6 +109,42 @@ def _format_argument_value(value: object) -> str:
     return str(value)
 
 
+def print_run_progress_start(
+    *,
+    index: int,
+    total: int,
+    scenario_id: str,
+    adapter_name: str,
+    requirements: set[str],
+) -> None:
+    required = _format_capabilities(requirements)
+    console.print(
+        f"[bold cyan]Running[/bold cyan] {index}/{total}: {_e(scenario_id)} "
+        f"[dim](adapter={_e(adapter_name)}, required={_e(required)})[/dim]"
+    )
+
+
+def print_run_progress_complete(
+    *,
+    index: int,
+    total: int,
+    scenario_id: str,
+    status: str,
+    duration_seconds: float | None,
+) -> None:
+    duration = f" in {duration_seconds:.2f}s" if duration_seconds is not None else ""
+    status_style = {
+        "passed": "green",
+        "failed": "red",
+        "error": "red",
+        "timeout": "yellow",
+    }.get(status, "white")
+    console.print(
+        f"[bold]Finished[/bold] {index}/{total}: {_e(scenario_id)} "
+        f"-> [{status_style}]{_e(status.upper())}[/{status_style}]{duration}"
+    )
+
+
 def _print_single_result(
     result: RunResult,
     artifacts: ArtifactBundle | None = None,

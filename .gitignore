@@ -5,6 +5,7 @@ __pycache__/
 !.tddf/baseline.json
 !.tddf/snapshots/
 !.tddf/snapshots/**
+.smoke/
 .claude/
 .ruff_cache/
 

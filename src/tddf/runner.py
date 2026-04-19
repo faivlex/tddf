@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import Callable
 from urllib.parse import unquote
 
 from tddf.config import ScenarioStep, TddfConfig, TrapConfig
@@ -276,6 +278,13 @@ def _merge_stdio_captures(
     return len(stdio_calls)
 
 
+def _cleanup_tempdir(tempdir: TemporaryDirectory[str] | None) -> None:
+    if tempdir is None:
+        return
+    with suppress(FileNotFoundError, OSError):
+        tempdir.cleanup()
+
+
 def _determine_status(
     evidence: list[Evidence],
     last_exit_code: int | None,
@@ -481,6 +490,7 @@ async def _execute_scenario(
             last_command = target_invocation.command
 
             step_start = time.perf_counter()
+            process: asyncio.subprocess.Process | None = None
             try:
                 process = await asyncio.create_subprocess_exec(
                     *target_invocation.command,
@@ -501,6 +511,13 @@ async def _execute_scenario(
                     step_duration = time.perf_counter() - step_start
                     last_exit_code = None
                     timed_out = True
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    if process.returncode is None:
+                        with suppress(ProcessLookupError):
+                            process.kill()
+                        with suppress(Exception):
+                            await process.communicate()
+                    raise
             except OSError:
                 stdout_bytes, stderr_bytes = b"", b""
                 step_duration = time.perf_counter() - step_start
@@ -686,29 +703,38 @@ async def _execute_scenario(
         )
     finally:
         for cleanup_dir in adapter_home.cleanup_dirs:
-            cleanup_dir.cleanup()
+            _cleanup_tempdir(cleanup_dir)
         if article_server is not None:
             article_server.stop()
-        if document_tempdir is not None:
-            document_tempdir.cleanup()
-        if deputy_tempdir is not None:
-            deputy_tempdir.cleanup()
-        if workspace_tempdir is not None:
-            workspace_tempdir.cleanup()
-        if mcp_capture_tempdir is not None:
-            mcp_capture_tempdir.cleanup()
+        _cleanup_tempdir(document_tempdir)
+        _cleanup_tempdir(deputy_tempdir)
+        _cleanup_tempdir(workspace_tempdir)
+        _cleanup_tempdir(mcp_capture_tempdir)
         if mcp_server is not None:
             mcp_server.stop()
         attacker_server.stop()
 
 
-async def execute_run(config: TddfConfig, config_path: Path) -> RunBatch:
+async def execute_run(
+    config: TddfConfig,
+    config_path: Path,
+    *,
+    on_scenario_start: Callable[[TrapConfig, int, int], None] | None = None,
+    on_scenario_complete: Callable[[RunResult, int, int], None] | None = None,
+) -> RunBatch:
     config_path = config_path.resolve()
     run_started_at = datetime.now(UTC)
     run_id = f"run-{run_started_at.strftime('%Y%m%dT%H%M%SZ')}-{uuid.uuid4().hex[:8]}"
     results: list[RunResult] = []
+    scenarios = list(config.scenario_definitions)
+    total = len(scenarios)
 
-    for trap in config.scenario_definitions:
-        results.append(await _execute_scenario(config, config_path, trap, run_id))
+    for index, trap in enumerate(scenarios, start=1):
+        if on_scenario_start is not None:
+            on_scenario_start(trap, index, total)
+        result = await _execute_scenario(config, config_path, trap, run_id)
+        results.append(result)
+        if on_scenario_complete is not None:
+            on_scenario_complete(result, index, total)
 
     return RunBatch(run_id=run_id, config_path=str(config_path), results=results)

@@ -13,6 +13,23 @@ from tddf.payloads import DEPUTY_FINANCE_ESCALATION, DIRECT_OVERRIDE, DOCUMENT_F
 _BUILTIN_REGISTRY_PACKAGE = "tddf.data"
 
 
+def _default_mcp_allowed_tools() -> list[str]:
+    return ["list_resources", "read_resource"]
+
+
+def _default_mcp_sensitive_tools() -> list[str]:
+    return ["read_resource"]
+
+
+def _default_mcp_resources() -> list["McpResourceConfig"]:
+    return [
+        McpResourceConfig(
+            key="project_notes", value="Roadmap and release notes", sensitive=False
+        ),
+        McpResourceConfig(key="demo_secret", value="TDDF_DEMO_SECRET", sensitive=True),
+    ]
+
+
 def _resolve_registry_reference(ref: str) -> Path:
     """Resolve a ``scenarios_from_registry`` reference to a concrete path.
 
@@ -722,20 +739,9 @@ class McpConfig(BaseModel):
 
     enabled: bool = True
     endpoint_path: str = "/mcp"
-    allowed_tools: list[str] = Field(
-        default_factory=lambda: ["list_resources", "read_resource"]
-    )
-    sensitive_tools: list[str] = Field(default_factory=lambda: ["read_resource"])
-    resources: list[McpResourceConfig] = Field(
-        default_factory=lambda: [
-            McpResourceConfig(
-                key="project_notes", value="Roadmap and release notes", sensitive=False
-            ),
-            McpResourceConfig(
-                key="demo_secret", value="TDDF_DEMO_SECRET", sensitive=True
-            ),
-        ]
-    )
+    allowed_tools: list[str] = Field(default_factory=_default_mcp_allowed_tools)
+    sensitive_tools: list[str] = Field(default_factory=_default_mcp_sensitive_tools)
+    resources: list[McpResourceConfig] = Field(default_factory=_default_mcp_resources)
     tools: list[McpToolConfig] = Field(default_factory=list)
 
     def is_sensitive_tool(self, tool_name: str) -> bool:
@@ -1035,10 +1041,13 @@ class TddfConfig(BaseModel):
         materialized: list[TrapConfig] = []
         extra_mcp_tools: list[McpToolConfig] = []
         existing_tool_names = {tool.name for tool in self.mcp.tools}
+        saw_agentdojo_registry = False
+        saw_non_agentdojo_registry = False
         for ref in self.scenarios_from_registry:
             registry_path = _resolve_registry_reference(ref)
             registry = load_trap_registry(registry_path)
             if registry.source_name.startswith("agentdojo-"):
+                saw_agentdojo_registry = True
                 result = materialize_agentdojo_registry(registry)
                 materialized.extend(result.traps)
                 for tool in result.mcp_tools:
@@ -1047,7 +1056,15 @@ class TddfConfig(BaseModel):
                     existing_tool_names.add(tool.name)
                     extra_mcp_tools.append(tool)
             else:
+                saw_non_agentdojo_registry = True
                 materialized.extend(materialize_injecagent_registry(registry))
+        if self._should_strip_default_agentdojo_mcp_surface(
+            saw_agentdojo_registry=saw_agentdojo_registry,
+            saw_non_agentdojo_registry=saw_non_agentdojo_registry,
+        ):
+            self.mcp.allowed_tools = []
+            self.mcp.sensitive_tools = []
+            self.mcp.resources = []
         if extra_mcp_tools:
             # Auto-register tools the agentdojo materialiser synthesised so
             # the mock MCP surface recognises the calls the imported
@@ -1058,3 +1075,30 @@ class TddfConfig(BaseModel):
             if not self.mcp.enabled:
                 self.mcp.enabled = True
         return materialized
+
+    def _should_strip_default_agentdojo_mcp_surface(
+        self,
+        *,
+        saw_agentdojo_registry: bool,
+        saw_non_agentdojo_registry: bool,
+    ) -> bool:
+        if not saw_agentdojo_registry or saw_non_agentdojo_registry:
+            return False
+        if not self._is_registry_only_configuration():
+            return False
+        return (
+            self.mcp.allowed_tools == _default_mcp_allowed_tools()
+            and self.mcp.sensitive_tools == _default_mcp_sensitive_tools()
+            and self.mcp.resources == _default_mcp_resources()
+        )
+
+    def _is_registry_only_configuration(self) -> bool:
+        return not any(
+            [
+                self.trap is not None,
+                bool(self.scenarios),
+                bool(self.trap_families),
+                bool(self.delivery_strategies),
+                bool(self.scenario_compositions),
+            ]
+        )

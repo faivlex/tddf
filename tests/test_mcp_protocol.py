@@ -308,6 +308,17 @@ def test_dispatch_resources_read_by_uri() -> None:
     assert "TDDF_DEMO_SECRET" in result["contents"][0]["text"]
 
 
+def test_dispatch_resources_list_records_allowed_call() -> None:
+    state = _state()
+    response = dispatch(
+        {"jsonrpc": "2.0", "id": 6, "method": "resources/list"},
+        state,
+    )
+    assert response is not None
+    assert state.capture.calls[0].tool_name == "list_resources"
+    assert state.capture.calls[0].allowed is True
+
+
 def test_dispatch_resources_list_rejects_disallowed_builtin_surface() -> None:
     state = ServerState(
         config=McpConfig(allowed_tools=[]),

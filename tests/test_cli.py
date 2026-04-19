@@ -179,6 +179,20 @@ def test_run_fail_severity_allows_lower_severity_failure(tmp_path: Path) -> None
     assert "LOW" in result.stdout
 
 
+def test_run_prints_progress_lines(tmp_path: Path) -> None:
+    config_path = tmp_path / "tddf.yaml"
+    _write_workspace_scenario_config(config_path, "safe_agent.py", scenario_id="progress-demo")
+
+    result = runner.invoke(
+        app,
+        ["run", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 0, result.stdout
+    assert "Running 1/1: progress-demo" in result.stdout
+    assert "Finished 1/1: progress-demo -> PASSED" in result.stdout
+
+
 def test_run_fail_severity_rejects_invalid_value() -> None:
     result = runner.invoke(app, ["run", "--fail-severity", "urgent"])
 

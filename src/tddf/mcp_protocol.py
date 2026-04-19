@@ -319,6 +319,19 @@ def _handle_resources_list(
     params: dict[str, Any], state: ServerState
 ) -> dict[str, Any]:
     _require_allowed_resource_method(state, "list_resources")
+    sensitive = state.config.is_sensitive_tool("list_resources")
+    _record_call(
+        state,
+        McpCall(
+            tool_name="list_resources",
+            resource_key=None,
+            sensitive=sensitive,
+            allowed=True,
+            tool_sensitive=sensitive,
+            resource_sensitive=False,
+            query_arguments={},
+        ),
+    )
     entries = [
         {
             "uri": f"mcp://tddf/{resource.key}",

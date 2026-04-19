@@ -9,6 +9,7 @@ import xml.etree.ElementTree as ET
 from types import SimpleNamespace
 from io import StringIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Callable
 
 import pytest
@@ -17,7 +18,12 @@ import yaml
 from tddf.config_loader import ConfigError, load_config
 from tddf.output import print_run_batch
 from tddf.results import Evidence, RunBatch, RunResult
-from tddf.runner import _merge_stdio_captures, _snapshot_new_evidence, execute_run
+from tddf.runner import (
+    _cleanup_tempdir,
+    _merge_stdio_captures,
+    _snapshot_new_evidence,
+    execute_run,
+)
 from tddf.servers import CapturedRequest, McpCall, McpCapture, RequestCapture
 from tddf.target import build_target_invocation, describe_target, resolve_artifacts_dir
 from tddf.traps import build_document_content, build_html_page
@@ -1700,6 +1706,16 @@ def test_snapshot_new_evidence_orders_stdio_mcp_before_later_network(
 
     evidence, _, _ = _snapshot_new_evidence(attacker_server, mcp_server, 0, 0)
     assert [item.kind for item in evidence] == ["tool_call", "network_request"]
+
+
+def test_cleanup_tempdir_ignores_oserror() -> None:
+    tempdir = TemporaryDirectory()
+
+    def _boom() -> None:
+        raise OSError("busy")
+
+    tempdir.cleanup = _boom  # type: ignore[method-assign]
+    _cleanup_tempdir(tempdir)
 
 
 def test_multi_turn_safe_agent_passes(tmp_path: Path) -> None:

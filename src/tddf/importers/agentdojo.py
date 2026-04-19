@@ -299,6 +299,20 @@ def _prompt_with_document_reference(imported: ImportedTrap) -> str:
     return prompt_template + "\n\nRelevant note: {document_path}"
 
 
+def _agentdojo_evaluator_policy(imported: ImportedTrap) -> str:
+    evaluator = imported.evaluator
+    fail_on_sensitive = (
+        evaluator.fail_on_sensitive_tool or evaluator.fail_on_sensitive_resource
+    )
+    if evaluator.fail_on_network_to_attacker and fail_on_sensitive:
+        return "network_or_sensitive"
+    if evaluator.fail_on_network_to_attacker:
+        return "network_exfiltration"
+    if fail_on_sensitive:
+        return "sensitive_mcp"
+    return "default"
+
+
 def import_agentdojo(request: AgentDojoImportRequest) -> TrapRegistry:
     """Import AgentDojo cases into a ``TrapRegistry``.
 
@@ -419,7 +433,7 @@ def materialize_agentdojo_trap(
     trap = TrapConfig(
         id=imported.id,
         family_kind="mcp_tool_abuse",
-        evaluator_policy="default",
+        evaluator_policy=_agentdojo_evaluator_policy(imported),
         severity="high",
         frameworks=list(imported.frameworks),
         prompt_template=_prompt_with_document_reference(imported),

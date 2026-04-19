@@ -48,6 +48,8 @@ from tddf.importers.injecagent import (
 from tddf.output import (
     print_baseline_diff,
     print_baseline_file,
+    print_run_progress_complete,
+    print_run_progress_start,
     print_run_batch,
     print_snapshot_diffs,
 )
@@ -378,7 +380,26 @@ def _execute_run_once(
             return 2
 
     resolved_config_path = config.resolve()
-    batch = asyncio.run(execute_run(loaded, resolved_config_path))
+    batch = asyncio.run(
+        execute_run(
+            loaded,
+            resolved_config_path,
+            on_scenario_start=lambda trap, index, total: print_run_progress_start(
+                index=index,
+                total=total,
+                scenario_id=trap.id,
+                adapter_name=loaded.target.kind,
+                requirements=trap.required_capabilities,
+            ),
+            on_scenario_complete=lambda result, index, total: print_run_progress_complete(
+                index=index,
+                total=total,
+                scenario_id=result.scenario_id,
+                status=result.status,
+                duration_seconds=result.duration_seconds,
+            ),
+        )
+    )
     artifacts_dir = resolve_artifacts_dir(loaded, resolved_config_path)
     artifacts = (
         {
