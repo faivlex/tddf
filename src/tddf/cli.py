@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -326,6 +327,14 @@ def import_agentdojo_command(
         f"[green]Source:[/green] {registry.source_repo}@{registry.source_revision} "
         f"(suite={suite.value}, version={benchmark_version})"
     )
+    skipped = registry.import_stats.get("skipped_pairings", 0)
+    if skipped:
+        console.print(
+            "[yellow]Skipped pairings:[/yellow] "
+            f"{skipped} "
+            f"(ground-truth errors={registry.import_stats.get('skipped_ground_truth_errors', 0)}, "
+            f"empty ground truth={registry.import_stats.get('skipped_empty_ground_truth', 0)})"
+        )
 
 
 def _execute_run_once(
@@ -528,6 +537,7 @@ def watch(
     if watch_path:
         watched.extend(watch_path)
     watched = [path.resolve() for path in watched]
+    resolved_config = config.resolve()
 
     def _once() -> int:
         return _execute_run_once(
@@ -539,10 +549,18 @@ def watch(
             snapshots_dir=snapshots_dir,
         )
 
+    def _ignored() -> list[Path]:
+        try:
+            loaded = load_config(resolved_config)
+        except ConfigError:
+            return [(resolved_config.parent / ".tddf" / "artifacts").resolve()]
+        return [resolve_artifacts_dir(loaded, resolved_config)]
+
     run_watch(
         watched,
         run_once=_once,
         interval=interval,
+        ignored_paths=_ignored,
         notify=lambda line: console.print(f"[bold cyan]{line}[/bold cyan]"),
     )
 
@@ -682,10 +700,9 @@ def install_hook_command(
         )
         raise typer.Exit(code=1)
 
-    git_dir = Path(".git")
-    hooks_dir = git_dir / "hooks"
-    if not git_dir.is_dir():
-        console.print("[red]Not a git repository:[/red] no .git directory found.")
+    hooks_dir = _resolve_git_hooks_dir(Path.cwd())
+    if hooks_dir is None:
+        console.print("[red]Not a git repository:[/red] could not resolve git hooks directory.")
         raise typer.Exit(code=1)
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -697,15 +714,17 @@ def install_hook_command(
         console.print("Re-run with [bold]--force[/bold] to overwrite it.")
         raise typer.Exit(code=1)
 
-    script = _render_hook_script(config, baseline, fail_severity)
+    resolved_config = config.resolve()
+    resolved_baseline = baseline.resolve()
+    script = _render_hook_script(resolved_config, resolved_baseline, fail_severity)
     hook_path.write_text(script)
     hook_path.chmod(0o755)
     console.print(
         f"[green]Installed[/green] {stage} hook at [bold]{hook_path}[/bold]"
     )
     console.print(
-        f"  runs: tddf run --config {config} "
-        f"(with --baseline {baseline} if present) "
+        f"  runs: tddf run --config {resolved_config} "
+        f"(with --baseline {resolved_baseline} if present) "
         f"--fail-severity {fail_severity}"
     )
 
@@ -730,6 +749,47 @@ def _render_hook_script(
         f'    exec tddf run --config "{config}" --fail-severity "{fail_severity}"\n'
         "fi\n"
     )
+
+
+def _resolve_git_hooks_dir(cwd: Path) -> Path | None:
+    resolved_cwd = cwd.resolve()
+    for base in (resolved_cwd, *resolved_cwd.parents):
+        hooks_dir = _hooks_dir_from_git_entry(base / ".git")
+        if hooks_dir is not None:
+            return hooks_dir
+
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--git-path", "hooks"],
+            cwd=str(resolved_cwd),
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (FileNotFoundError, OSError, subprocess.TimeoutExpired):
+        return None
+    if result.returncode != 0:
+        return None
+    hooks_path = Path(result.stdout.strip())
+    if not hooks_path.is_absolute():
+        hooks_path = (resolved_cwd / hooks_path).resolve()
+    return hooks_path
+
+
+def _hooks_dir_from_git_entry(git_entry: Path) -> Path | None:
+    if git_entry.is_dir():
+        return git_entry / "hooks"
+    if not git_entry.is_file():
+        return None
+    try:
+        raw = git_entry.read_text().strip()
+    except OSError:
+        return None
+    prefix = "gitdir:"
+    if not raw.startswith(prefix):
+        return None
+    git_dir = raw[len(prefix) :].strip()
+    return (git_entry.parent / git_dir).resolve() / "hooks"
 
 
 @baseline_app.command("save")

@@ -23,7 +23,8 @@ class Evidence:
     headers: dict[str, str] | None = None
     body_preview: str | None = None
     body_size: int | None = None
-    tool_arguments: dict[str, str] | None = None
+    tool_arguments: dict[str, object] | None = None
+    observed_at_ns: int | None = None
     leaked_secrets: list[str] = field(default_factory=list)
 
 

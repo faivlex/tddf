@@ -236,9 +236,44 @@ def _snapshot_new_evidence(
     all_capture = build_capture_evidence(attacker_server)
     all_mcp = build_mcp_evidence(mcp_server) if mcp_server is not None else []
     new_evidence = all_capture[prev_capture_count:] + all_mcp[prev_mcp_count:]
+    new_evidence.sort(key=_evidence_sort_key)
     new_capture_count = snapshot_capture_count(attacker_server)
     new_mcp_count = snapshot_mcp_count(mcp_server) if mcp_server is not None else 0
     return new_evidence, new_capture_count, new_mcp_count
+
+
+def _evidence_sort_key(item: Evidence) -> tuple[int, str, str, str]:
+    return (
+        item.observed_at_ns or 0,
+        item.kind,
+        item.tool_name or "",
+        item.path or "",
+    )
+
+
+def _sort_evidence_in_place(evidence: list[Evidence]) -> None:
+    evidence.sort(key=_evidence_sort_key)
+
+
+def _merge_stdio_captures(
+    mcp_server,
+    capture_file: Path | None,
+    previously_merged: int,
+) -> int:
+    if mcp_server is None or capture_file is None or not capture_file.exists():
+        return previously_merged
+
+    from tddf.mcp_stdio import load_captures_from_file
+
+    stdio_calls = load_captures_from_file(capture_file)
+    if len(stdio_calls) <= previously_merged:
+        return len(stdio_calls)
+
+    new_calls = stdio_calls[previously_merged:]
+    if new_calls:
+        with mcp_server.mcp_capture.lock:
+            mcp_server.mcp_capture.calls.extend(new_calls)
+    return len(stdio_calls)
 
 
 def _determine_status(
@@ -379,9 +414,9 @@ async def _execute_scenario(
 
     # Create a per-scenario capture file for any stdio-transported MCP
     # server the agent may spawn (via e.g. `tddf mcp-server`). Tool calls
-    # recorded there get merged back into the in-memory capture after the
-    # scenario completes, so structural / semantic evaluators see both
-    # HTTP-path and stdio-path calls.
+    # recorded there get merged back into the in-memory capture during each
+    # step and after final flush, so structural / semantic evaluators see
+    # both HTTP-path and stdio-path calls in one ordered trace.
     mcp_capture_tempdir: TemporaryDirectory[str] | None = None
     mcp_capture_file: Path | None = None
     if mcp_server is not None:
@@ -414,6 +449,7 @@ async def _execute_scenario(
     timed_out = False
     prev_capture_count = 0
     prev_mcp_count = 0
+    prev_stdio_capture_count = 0
 
     try:
         for step_index, step in enumerate(steps):
@@ -475,6 +511,12 @@ async def _execute_scenario(
             all_stdout += step_stdout
             all_stderr += step_stderr
 
+            prev_stdio_capture_count = _merge_stdio_captures(
+                mcp_server,
+                mcp_capture_file,
+                prev_stdio_capture_count,
+            )
+
             new_evidence, prev_capture_count, prev_mcp_count = _snapshot_new_evidence(
                 attacker_server, mcp_server, prev_capture_count, prev_mcp_count
             )
@@ -514,30 +556,30 @@ async def _execute_scenario(
         total_duration = time.perf_counter() - scenario_start
         completed_at = datetime.now(UTC)
 
-        # Merge any stdio-transported MCP captures back into the in-memory
-        # capture so the evaluator sees HTTP + stdio calls as a single trace.
-        if (
-            mcp_server is not None
-            and mcp_capture_file is not None
-            and mcp_capture_file.exists()
-        ):
-            from tddf.mcp_stdio import load_captures_from_file
-
-            stdio_calls = load_captures_from_file(mcp_capture_file)
-            if stdio_calls:
-                with mcp_server.mcp_capture.lock:
-                    mcp_server.mcp_capture.calls.extend(stdio_calls)
-                # Re-read the final snapshot of evidence so the newly-merged
-                # tool_call entries show up in all_evidence too.
-                new_evidence_after_merge, prev_capture_count, prev_mcp_count = (
-                    _snapshot_new_evidence(
-                        attacker_server,
-                        mcp_server,
-                        prev_capture_count,
-                        prev_mcp_count,
-                    )
+        # Pick up any final stdio captures flushed after the last step ended.
+        final_stdio_count = _merge_stdio_captures(
+            mcp_server,
+            mcp_capture_file,
+            prev_stdio_capture_count,
+        )
+        if final_stdio_count != prev_stdio_capture_count:
+            new_evidence_after_merge, prev_capture_count, prev_mcp_count = (
+                _snapshot_new_evidence(
+                    attacker_server,
+                    mcp_server,
+                    prev_capture_count,
+                    prev_mcp_count,
                 )
-                all_evidence.extend(new_evidence_after_merge)
+            )
+            all_evidence.extend(new_evidence_after_merge)
+            if step_results:
+                step_results[-1].evidence.extend(new_evidence_after_merge)
+                _sort_evidence_in_place(step_results[-1].evidence)
+            prev_stdio_capture_count = final_stdio_count
+
+        _sort_evidence_in_place(all_evidence)
+        for step_result in step_results:
+            _sort_evidence_in_place(step_result.evidence)
 
         mcp_resource_catalog = [
             (item.key, item.value, item.sensitive) for item in config.mcp.resources

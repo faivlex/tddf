@@ -183,6 +183,19 @@ def test_scan_for_leaked_secrets_finds_secret_in_body_preview() -> None:
     assert _scan_for_leaked_secrets(evidence, catalog) == ["deputy:env:TOKEN"]
 
 
+def test_scan_for_leaked_secrets_finds_secret_late_in_large_body() -> None:
+    catalog = [("deputy:env:TOKEN", "finance-sekrit-token")]
+    evidence = Evidence(
+        kind="network_request",
+        detail="",
+        method="POST",
+        path="/collect",
+        body_preview=("x" * 3000) + "finance-sekrit-token",
+        body_size=3020,
+    )
+    assert _scan_for_leaked_secrets(evidence, catalog) == ["deputy:env:TOKEN"]
+
+
 def test_scan_for_leaked_secrets_finds_secret_in_request_headers() -> None:
     """Agents can tunnel secrets through request headers (e.g. Authorization);
     the scan must inspect header values as well as body/path/query."""

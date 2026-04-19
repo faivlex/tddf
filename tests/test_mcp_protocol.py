@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 import asyncio
@@ -13,6 +15,7 @@ from tddf.mcp_protocol import (
     ERROR_PARSE,
     ServerState,
     dispatch,
+    parse_jsonrpc_payload,
     parse_jsonrpc_request,
 )
 from tddf.servers import McpCapture, start_mcp_server
@@ -73,6 +76,15 @@ def test_parse_reports_parse_error_on_invalid_json() -> None:
     _, err = parse_jsonrpc_request("{not json")
     assert err is not None
     assert err.code == ERROR_PARSE
+
+
+def test_parse_payload_accepts_batches() -> None:
+    payload, err = parse_jsonrpc_payload(
+        '[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]'
+    )
+    assert err is None
+    assert isinstance(payload, list)
+    assert payload[0]["method"] == "tools/list"
 
 
 def test_dispatch_initialize_negotiates_supported_version() -> None:
@@ -147,6 +159,17 @@ def test_dispatch_tools_list_uses_input_schema_escape_hatch() -> None:
     assert tools["get_contact"]["inputSchema"] == custom_schema
 
 
+def test_dispatch_tools_list_hides_disallowed_builtins() -> None:
+    state = ServerState(
+        config=McpConfig(allowed_tools=[], tools=[]),
+        resources={},
+        capture=McpCapture(),
+    )
+    response = dispatch({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}, state)
+    assert response is not None
+    assert response.to_dict()["result"]["tools"] == []
+
+
 def test_dispatch_tools_call_records_configured_tool() -> None:
     state = _state()
     response = dispatch(
@@ -181,6 +204,57 @@ def test_dispatch_tools_call_marks_sensitive_invocations() -> None:
         state,
     )
     assert state.capture.calls[0].sensitive is True
+
+
+def test_dispatch_tools_call_rejects_disallowed_builtin() -> None:
+    state = ServerState(
+        config=McpConfig(allowed_tools=[]),
+        resources={},
+        capture=McpCapture(),
+    )
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "method": "tools/call",
+            "params": {"name": "read_resource", "arguments": {"key": "demo_secret"}},
+        },
+        state,
+    )
+    assert response is not None
+    payload = response.to_dict()["result"]
+    assert payload["isError"] is True
+    assert state.capture.calls[0].allowed is False
+
+
+def test_dispatch_tools_call_preserves_non_string_argument_values() -> None:
+    state = ServerState(
+        config=McpConfig(
+            tools=[
+                McpToolConfig(
+                    name="measure",
+                    parameters=["temperature"],
+                    input_schema={
+                        "type": "object",
+                        "properties": {"temperature": {"type": "number"}},
+                        "required": ["temperature"],
+                    },
+                )
+            ]
+        ),
+        resources={},
+        capture=McpCapture(),
+    )
+    dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 9,
+            "method": "tools/call",
+            "params": {"name": "measure", "arguments": {"temperature": 0.5}},
+        },
+        state,
+    )
+    assert state.capture.calls[0].query_arguments == {"temperature": 0.5}
 
 
 def test_dispatch_tools_call_rejects_unknown_tool_with_is_error() -> None:
@@ -234,6 +308,43 @@ def test_dispatch_resources_read_by_uri() -> None:
     assert "TDDF_DEMO_SECRET" in result["contents"][0]["text"]
 
 
+def test_dispatch_resources_list_rejects_disallowed_builtin_surface() -> None:
+    state = ServerState(
+        config=McpConfig(allowed_tools=[]),
+        resources={item.key: item for item in McpConfig().resources},
+        capture=McpCapture(),
+    )
+    response = dispatch(
+        {"jsonrpc": "2.0", "id": 6, "method": "resources/list"},
+        state,
+    )
+    assert response is not None
+    assert response.to_dict()["error"]["code"] == -32602
+    assert state.capture.calls[0].tool_name == "list_resources"
+    assert state.capture.calls[0].allowed is False
+
+
+def test_dispatch_resources_read_rejects_disallowed_builtin_surface() -> None:
+    state = ServerState(
+        config=McpConfig(allowed_tools=[]),
+        resources={item.key: item for item in McpConfig().resources},
+        capture=McpCapture(),
+    )
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 6,
+            "method": "resources/read",
+            "params": {"uri": "mcp://tddf/demo_secret"},
+        },
+        state,
+    )
+    assert response is not None
+    assert response.to_dict()["error"]["code"] == -32602
+    assert state.capture.calls[0].tool_name == "read_resource"
+    assert state.capture.calls[0].allowed is False
+
+
 def test_dispatch_resources_read_invalid_uri_returns_error() -> None:
     state = _state()
     response = dispatch(
@@ -247,6 +358,56 @@ def test_dispatch_resources_read_invalid_uri_returns_error() -> None:
     )
     # InvalidParams maps to -32602.
     assert response.to_dict()["error"]["code"] == -32602
+
+
+def test_dispatch_custom_tool_template_serializes_structured_arguments() -> None:
+    state = ServerState(
+        config=McpConfig(
+            tools=[
+                McpToolConfig(
+                    name="measure",
+                    parameters=["payload"],
+                    response_template='{"payload":{payload}}',
+                )
+            ]
+        ),
+        resources={},
+        capture=McpCapture(),
+    )
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 10,
+            "method": "tools/call",
+            "params": {
+                "name": "measure",
+                "arguments": {"payload": {"ok": True, "items": [1, None]}},
+            },
+        },
+        state,
+    )
+    assert response is not None
+    text = response.to_dict()["result"]["content"][0]["text"]
+    assert text == '{"payload":{"items":[1,null],"ok":true}}'
+
+
+def test_dispatch_custom_tool_template_escapes_string_arguments_in_json() -> None:
+    state = _state()
+    response = dispatch(
+        {
+            "jsonrpc": "2.0",
+            "id": 11,
+            "method": "tools/call",
+            "params": {
+                "name": "get_contact",
+                "arguments": {"name": 'carol "ops"\nlead'},
+            },
+        },
+        state,
+    )
+    assert response is not None
+    text = response.to_dict()["result"]["content"][0]["text"]
+    assert json.loads(text) == {"name": 'carol "ops"\nlead', "phone": "555-1234"}
 
 
 # ---------------------------------------------------------------------------
@@ -275,15 +436,17 @@ def running_mcp_server():
         server.stop()
 
 
-def _post_jsonrpc(url: str, body: dict) -> dict:
+def _post_jsonrpc(
+    url: str, body: dict | list[dict], headers: dict[str, str] | None = None
+) -> tuple[int, str]:
     req = Request(
         url,
         data=json.dumps(body).encode("utf-8"),
         method="POST",
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **(headers or {})},
     )
     with urlopen(req) as response:  # noqa: S310
-        return json.loads(response.read().decode("utf-8"))
+        return response.status, response.read().decode("utf-8")
 
 
 def test_http_jsonrpc_initialize_records_protocol_version(running_mcp_server):
@@ -304,7 +467,7 @@ def test_http_jsonrpc_initialize_records_protocol_version(running_mcp_server):
 def test_http_jsonrpc_tools_call_captures_invocation(running_mcp_server):
     server, config = running_mcp_server
     url = f"{server.base_url}{config.endpoint_path}"
-    response = _post_jsonrpc(
+    status, body = _post_jsonrpc(
         url,
         {
             "jsonrpc": "2.0",
@@ -313,12 +476,113 @@ def test_http_jsonrpc_tools_call_captures_invocation(running_mcp_server):
             "params": {"name": "get_contact", "arguments": {"name": "bob"}},
         },
     )
+    response = json.loads(body)
+    assert status == 200
     assert response["result"]["isError"] is False
     with server.mcp_capture.lock:
         calls = list(server.mcp_capture.calls)
     assert len(calls) == 1
     assert calls[0].tool_name == "get_contact"
     assert calls[0].query_arguments == {"name": "bob"}
+
+
+def test_http_jsonrpc_resources_read_rejects_disallowed_surface() -> None:
+    async def _start():
+        config = McpConfig(allowed_tools=[])
+        return await start_mcp_server(config), config
+
+    server, config = asyncio.run(_start())
+    try:
+        url = f"{server.base_url}{config.endpoint_path}"
+        status, body = _post_jsonrpc(
+            url,
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "resources/read",
+                "params": {"uri": "mcp://tddf/demo_secret"},
+            },
+        )
+        assert status == 200
+        assert json.loads(body)["error"]["code"] == -32602
+    finally:
+        server.stop()
+
+
+def test_http_jsonrpc_batch_dispatches_requests(running_mcp_server):
+    server, config = running_mcp_server
+    url = f"{server.base_url}{config.endpoint_path}"
+    status, body = _post_jsonrpc(
+        url,
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {"protocolVersion": "2025-06-18"},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {"name": "get_contact", "arguments": {"name": "bob"}},
+            },
+        ],
+    )
+    assert status == 200
+    payload = json.loads(body)
+    assert isinstance(payload, list)
+    assert [entry["id"] for entry in payload] == [1, 2]
+
+
+def test_http_jsonrpc_notification_returns_accepted(running_mcp_server):
+    server, config = running_mcp_server
+    url = f"{server.base_url}{config.endpoint_path}"
+    status, body = _post_jsonrpc(
+        url,
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+    )
+    assert status == 202
+    assert body == ""
+
+
+def test_http_get_without_legacy_query_returns_405(running_mcp_server):
+    server, config = running_mcp_server
+    url = f"{server.base_url}{config.endpoint_path}"
+    with pytest.raises(HTTPError) as excinfo:
+        urlopen(url)  # noqa: S310
+    assert excinfo.value.code == 405
+
+
+def test_http_rejects_cross_origin_requests(running_mcp_server):
+    server, config = running_mcp_server
+    url = f"{server.base_url}{config.endpoint_path}"
+    req = Request(
+        url,
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json", "Origin": "https://evil.example"},
+    )
+    with pytest.raises(HTTPError) as excinfo:
+        urlopen(req)  # noqa: S310
+    assert excinfo.value.code == 403
+
+
+def test_http_rejects_unsupported_protocol_header(running_mcp_server):
+    server, config = running_mcp_server
+    url = f"{server.base_url}{config.endpoint_path}"
+    req = Request(
+        url,
+        data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}).encode("utf-8"),
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "MCP-Protocol-Version": "9999-01-01",
+        },
+    )
+    with pytest.raises(HTTPError) as excinfo:
+        urlopen(req)  # noqa: S310
+    assert excinfo.value.code == 400
 
 
 def test_http_legacy_query_param_path_still_works(running_mcp_server):
@@ -331,3 +595,14 @@ def test_http_legacy_query_param_path_still_works(running_mcp_server):
     assert body == {"name": "carol", "phone": "555-1234"}
     with server.mcp_capture.lock:
         assert any(c.query_arguments == {"name": "carol"} for c in server.mcp_capture.calls)
+
+
+def test_http_legacy_query_param_path_escapes_string_arguments(running_mcp_server):
+    server, config = running_mcp_server
+    name = 'carol "ops"\nlead'
+    url = (
+        f"{server.base_url}{config.endpoint_path}?tool=get_contact&name={quote(name)}"
+    )
+    with urlopen(url) as r:  # noqa: S310
+        body = json.loads(r.read().decode("utf-8"))
+    assert body == {"name": name, "phone": "555-1234"}

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from rich.console import Console
@@ -55,7 +56,7 @@ def _render_evidence_item(item: Evidence, indent: str = "") -> list[str]:
         )
         if item.tool_arguments:
             args_str = ", ".join(
-                f"{_e(key)}={_e(value)}"
+                f"{_e(key)}={_e(_format_argument_value(value))}"
                 for key, value in sorted(item.tool_arguments.items())
             )
             lines.append(f"{indent}  args: {args_str}")
@@ -96,6 +97,16 @@ def _render_planted_payloads(planted: list[PlantedPayload]) -> str:
 
 def _format_capabilities(capabilities: set[str]) -> str:
     return ", ".join(sorted(capabilities)) if capabilities else "none"
+
+
+def _format_argument_value(value: object) -> str:
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, ensure_ascii=True)
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if value is None:
+        return "null"
+    return str(value)
 
 
 def _print_single_result(
@@ -437,7 +448,8 @@ def _observable_summary(observable) -> str:
     args = ""
     if observable.tool_arguments:
         joined = ",".join(
-            f"{_e(k)}={_e(v)}" for k, v in sorted(observable.tool_arguments.items())
+            f"{_e(k)}={_e(_format_argument_value(v))}"
+            for k, v in sorted(observable.tool_arguments.items())
         )
         args = f" args=({joined})"
     target = f" on {_e(observable.resource_key)}" if observable.resource_key else ""

@@ -17,6 +17,7 @@ list) and "attacker action only counts if a prior benign step happened"
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from tddf.config import ArgConstraintDict, ExpectedCallConstraint
@@ -97,11 +98,11 @@ def _serialise_where(
 
 def _args_match(
     where: dict[str, str | ArgConstraintDict],
-    observed: dict[str, str],
+    observed: dict[str, object],
 ) -> bool:
     """Return True iff every key in ``where`` has a matching observed arg."""
     for key, constraint in where.items():
-        value = observed.get(key)
+        value = _stringify_observed_arg(observed.get(key))
         if value is None:
             return False
         if isinstance(constraint, str):
@@ -116,6 +117,18 @@ def _args_match(
         if constraint.one_of is not None and value not in constraint.one_of:
             return False
     return True
+
+
+def _stringify_observed_arg(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float)):
+        return str(value)
+    return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
 
 
 def evaluate_tool_call_pattern(

@@ -14,8 +14,8 @@ from tddf.mcp_stdio import load_captures_from_file, run_stdio_server
 
 
 def _run_loop(
-    requests: list[dict], config: McpConfig, capture_file: Path | None = None
-) -> list[dict]:
+    requests: list[object], config: McpConfig, capture_file: Path | None = None
+) -> list[object]:
     """Feed ``requests`` to ``run_stdio_server`` as newline-delimited JSON,
     capture stdout, and return parsed responses (notification requests
     produce no response, so the list may be shorter than ``requests``)."""
@@ -47,6 +47,27 @@ def test_stdio_loop_responds_to_initialize_and_tools_list() -> None:
     assert responses[0]["result"]["serverInfo"]["name"] == "tddf-mock"
     tool_names = [t["name"] for t in responses[1]["result"]["tools"]]
     assert "ping" in tool_names
+
+
+def test_stdio_loop_accepts_batch_requests() -> None:
+    config = McpConfig(tools=[McpToolConfig(name="ping", parameters=["x"])])
+    responses = _run_loop(
+        [
+            [
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "initialize",
+                    "params": {"protocolVersion": "2025-06-18"},
+                },
+                {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+            ]
+        ],
+        config,
+    )
+    assert len(responses) == 1
+    assert isinstance(responses[0], list)
+    assert [entry["id"] for entry in responses[0]] == [1, 2]
 
 
 def test_stdio_loop_appends_captured_calls_to_file(tmp_path: Path) -> None:

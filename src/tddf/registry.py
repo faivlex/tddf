@@ -134,6 +134,7 @@ class TrapRegistry(BaseModel):
     source_revision: str
     source_license: str
     generated_from: str
+    import_stats: dict[str, int] = Field(default_factory=dict)
     traps: list[ImportedTrap] = Field(default_factory=list)
 
 

@@ -51,7 +51,7 @@ class Observable(BaseModel):
     tool_name: str | None = None
     resource_key: str | None = None
     sensitive: bool | None = None
-    tool_arguments: dict[str, str] | None = None
+    tool_arguments: dict[str, object] | None = None
 
 
 class Snapshot(BaseModel):

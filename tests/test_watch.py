@@ -49,6 +49,44 @@ def test_detect_changes_detects_appearance_and_disappearance(tmp_path: Path) -> 
     assert snapshot_gone[path] is None
 
 
+def test_detect_changes_tracks_files_under_watched_directories(tmp_path: Path) -> None:
+    watched_dir = tmp_path / "src"
+    watched_dir.mkdir()
+    child = watched_dir / "agent.py"
+    child.write_text("print('one')")
+    first = _snapshot_mtimes([watched_dir])
+
+    child.write_text("print('two')")
+    import os
+
+    future = first[child] + 10
+    os.utime(child, (future, future))
+
+    current, changed = detect_changes(first, [watched_dir])
+    assert child in changed
+    assert current[child] == future
+
+
+def test_detect_changes_ignores_configured_paths(tmp_path: Path) -> None:
+    watched_dir = tmp_path / "repo"
+    ignored_dir = watched_dir / ".tddf" / "artifacts"
+    ignored_dir.mkdir(parents=True)
+    artifact = ignored_dir / "result.json"
+    artifact.write_text("one")
+
+    first = _snapshot_mtimes([watched_dir], ignored_paths=[ignored_dir])
+
+    artifact.write_text("two")
+    import os
+
+    future = artifact.stat().st_mtime + 10
+    os.utime(artifact, (future, future))
+
+    current, changed = detect_changes(first, [watched_dir], ignored_paths=[ignored_dir])
+    assert artifact not in current
+    assert changed == []
+
+
 def test_run_watch_invokes_run_once_on_change_then_exits_on_interrupt(
     tmp_path: Path,
 ) -> None:

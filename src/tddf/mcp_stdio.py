@@ -21,10 +21,9 @@ from typing import TextIO
 
 from tddf.config import McpConfig
 from tddf.mcp_protocol import (
-    JsonRpcResponse,
     ServerState,
-    dispatch,
-    parse_jsonrpc_request,
+    dispatch_payload,
+    parse_jsonrpc_payload,
 )
 from tddf.servers import McpCall, McpCapture
 
@@ -38,7 +37,7 @@ def run_stdio_server(
 ) -> None:
     """Run TDDF as an MCP server over stdio.
 
-    Reads one JSON-RPC request per line from ``stdin`` (default:
+    Reads one JSON-RPC payload per line from ``stdin`` (default:
     ``sys.stdin``), dispatches via :mod:`tddf.mcp_protocol`, writes the
     response JSON plus trailing newline to ``stdout`` (default:
     ``sys.stdout``). Notifications (requests without an ``id``) receive
@@ -65,20 +64,27 @@ def run_stdio_server(
         line = raw_line.strip()
         if not line:
             continue
-        request, parse_error = parse_jsonrpc_request(line)
+        payload, parse_error = parse_jsonrpc_payload(line)
         if parse_error is not None:
-            response = JsonRpcResponse(id=None, error=parse_error)
-            out_stream.write(json.dumps(response.to_dict()) + "\n")
+            out_stream.write(
+                json.dumps(
+                    {"jsonrpc": "2.0", "id": None, "error": parse_error.to_dict()}
+                )
+                + "\n"
+            )
             out_stream.flush()
             continue
-        assert request is not None
-        response = dispatch(request, state)
+        assert payload is not None
+        responses = dispatch_payload(payload, state)
         _flush_new_captures(capture, capture_file, flushed)
         flushed = len(capture.calls)
-        if response is None:
-            # Notification — no response body per JSON-RPC spec.
+        if not responses:
+            # Notifications / client responses do not produce output.
             continue
-        out_stream.write(json.dumps(response.to_dict()) + "\n")
+        if isinstance(payload, list):
+            out_stream.write(json.dumps([response.to_dict() for response in responses]) + "\n")
+        else:
+            out_stream.write(json.dumps(responses[0].to_dict()) + "\n")
         out_stream.flush()
 
 
@@ -116,6 +122,7 @@ def load_captures_from_file(path: Path) -> list[McpCall]:
             "tool_sensitive",
             "resource_sensitive",
             "query_arguments",
+            "observed_at_ns",
         }
         kwargs = {k: v for k, v in data.items() if k in allowed}
         calls.append(McpCall(**kwargs))

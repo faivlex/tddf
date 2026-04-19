@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import threading
+import time
 from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any
@@ -15,7 +16,7 @@ from tddf.config import McpConfig, McpResourceConfig, McpToolConfig
 _TOOL_TEMPLATE_TOKEN = re.compile(r"\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
 
 
-def _render_tool_response(template: str, args: dict[str, str]) -> str:
+def _render_tool_response(template: str, args: dict[str, object]) -> str:
     """Substitute ``{arg_name}`` tokens in ``template`` with the caller's
     argument values. Missing args render as ``<missing:arg_name>`` so the
     misconfiguration shows up in the response rather than silently emitting
@@ -23,7 +24,14 @@ def _render_tool_response(template: str, args: dict[str, str]) -> str:
 
     def replace(match: re.Match[str]) -> str:
         key = match.group(1)
-        return str(args.get(key, f"<missing:{key}>"))
+        value = args.get(key, f"<missing:{key}>")
+        if isinstance(value, str):
+            start, end = match.span()
+            if start > 0 and end < len(template):
+                if template[start - 1] == '"' and template[end] == '"':
+                    return json.dumps(value, ensure_ascii=True)[1:-1]
+            return value
+        return json.dumps(value, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
 
     return _TOOL_TEMPLATE_TOKEN.sub(replace, template)
 
@@ -31,14 +39,12 @@ if TYPE_CHECKING:
     from tddf.results import Evidence
 
 
-BODY_PREVIEW_LIMIT = 2048
-
-
 @dataclass(slots=True)
 class CapturedRequest:
     path: str
     method: str
     body: str
+    observed_at_ns: int
     headers: dict[str, str] = field(default_factory=dict)
     body_size: int = 0
 
@@ -58,7 +64,8 @@ class McpCall:
     allowed: bool
     tool_sensitive: bool = False
     resource_sensitive: bool = False
-    query_arguments: dict[str, str] = field(default_factory=dict)
+    query_arguments: dict[str, object] = field(default_factory=dict)
+    observed_at_ns: int = field(default_factory=time.time_ns)
 
 
 @dataclass(slots=True)
@@ -102,6 +109,7 @@ class _CaptureHandler(_BaseHandler):
             path=self.path,
             method=self.command,
             body=body,
+            observed_at_ns=time.time_ns(),
             headers=self._captured_headers(),
             body_size=body_size,
         )
@@ -132,7 +140,7 @@ class _CaptureHandler(_BaseHandler):
 
 
 class _McpHandler(_BaseHandler):
-    def _send_json(self, payload: dict[str, Any], status_code: int = 200) -> None:
+    def _send_json(self, payload: Any, status_code: int = 200) -> None:
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -145,27 +153,47 @@ class _McpHandler(_BaseHandler):
         self.send_header("Content-Length", "0")
         self.end_headers()
 
+    def _origin_is_allowed(self) -> bool:
+        origin = self.headers.get("Origin")
+        if not origin:
+            return True
+        parsed = urlparse(origin)
+        return parsed.hostname in {"127.0.0.1", "localhost"}
+
+    def _protocol_version_is_allowed(self) -> bool:
+        version = self.headers.get("MCP-Protocol-Version")
+        if version is None:
+            return True
+        from tddf.mcp_protocol import is_supported_protocol_version
+
+        return is_supported_protocol_version(version)
+
     def do_POST(self) -> None:  # noqa: N802
         """Handle an MCP JSON-RPC 2.0 request (streamable-HTTP transport).
 
-        Reads a single JSON-RPC request from the body, dispatches it via the
-        method handlers in ``tddf.mcp_protocol``, and writes the response as
-        a single JSON object. Notifications (requests without an ``id``)
-        receive a 204 No Content response per the HTTP MCP transport.
+        Reads a JSON-RPC payload from the body (single request or batch),
+        dispatches it via the method handlers in ``tddf.mcp_protocol``, and
+        writes the JSON-RPC response payload. Notifications / client-response
+        payloads with no server responses receive ``202 Accepted``.
         """
         parsed = urlparse(self.path)
         config: McpConfig = getattr(self.server, "mcp_config")
         if parsed.path != config.endpoint_path:
             self.send_error(404)
             return
+        if not self._origin_is_allowed():
+            self.send_error(403, "Origin not allowed")
+            return
+        if not self._protocol_version_is_allowed():
+            self.send_error(400, "Unsupported MCP-Protocol-Version")
+            return
 
         # Deferred import to keep the module graph layered — protocol depends
         # on this module's McpCall / McpCapture types.
         from tddf.mcp_protocol import (
-            JsonRpcResponse,
             ServerState,
-            dispatch,
-            parse_jsonrpc_request,
+            dispatch_payload,
+            parse_jsonrpc_payload,
         )
 
         content_length = int(self.headers.get("Content-Length", "0"))
@@ -183,14 +211,16 @@ class _McpHandler(_BaseHandler):
         if negotiated:
             state.negotiated_protocol_version = negotiated
 
-        request, parse_error = parse_jsonrpc_request(raw)
+        payload, parse_error = parse_jsonrpc_payload(raw)
         if parse_error is not None:
-            response = JsonRpcResponse(id=None, error=parse_error)
-            self._send_json(response.to_dict(), status_code=400)
+            self._send_json(
+                {"jsonrpc": "2.0", "id": None, "error": parse_error.to_dict()},
+                status_code=400,
+            )
             return
 
-        assert request is not None
-        response = dispatch(request, state)
+        assert payload is not None
+        responses = dispatch_payload(payload, state)
 
         # Persist any negotiated protocol version back onto the server.
         if state.negotiated_protocol_version:
@@ -200,11 +230,14 @@ class _McpHandler(_BaseHandler):
                 state.negotiated_protocol_version,
             )
 
-        if response is None:
-            # JSON-RPC notification — no response body per spec.
-            self._send_empty(status_code=204)
+        if not responses:
+            # Notifications / client responses are accepted with no body.
+            self._send_empty(status_code=202)
             return
-        self._send_json(response.to_dict())
+        if isinstance(payload, list):
+            self._send_json([response.to_dict() for response in responses])
+            return
+        self._send_json(responses[0].to_dict())
 
     def do_GET(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
@@ -215,8 +248,17 @@ class _McpHandler(_BaseHandler):
         if parsed.path != config.endpoint_path:
             self.send_error(404)
             return
+        if not self._origin_is_allowed():
+            self.send_error(403, "Origin not allowed")
+            return
+        if not self._protocol_version_is_allowed():
+            self.send_error(400, "Unsupported MCP-Protocol-Version")
+            return
 
         query = parse_qs(parsed.query)
+        if "tool" not in query and "key" not in query:
+            self.send_error(405)
+            return
         # The ``tool`` and ``key`` query keys are already surfaced as structured
         # fields (``tool_name`` / ``resource_key``) on the evidence record;
         # omit them from ``query_arguments`` to avoid echoing them back twice
@@ -226,7 +268,8 @@ class _McpHandler(_BaseHandler):
             for key, values in query.items()
             if values and key not in {"tool", "key"}
         }
-        tool_name = query.get("tool", ["list_resources"])[0]
+        default_tool = "read_resource" if "key" in query else "list_resources"
+        tool_name = query.get("tool", [default_tool])[0]
         resource_key = query.get("key", [None])[0]
         custom_tool: McpToolConfig | None = next(
             (tool for tool in config.tools if tool.name == tool_name), None
@@ -398,17 +441,6 @@ def snapshot_mcp_count(server: RunningServer) -> int:
         return len(server.mcp_capture.calls)
 
 
-def _truncate_body(body: str, size: int) -> str | None:
-    if not body:
-        return None
-    if len(body) <= BODY_PREVIEW_LIMIT:
-        return body
-    return (
-        body[:BODY_PREVIEW_LIMIT]
-        + f"… [truncated, {size} bytes total]"
-    )
-
-
 def _split_path_query(path: str) -> tuple[str, str | None]:
     parsed = urlparse(path)
     return parsed.path, (parsed.query or None)
@@ -439,8 +471,9 @@ def build_capture_evidence(server: RunningServer) -> list[Evidence]:
                 method=request.method,
                 query_string=query,
                 headers=dict(request.headers),
-                body_preview=_truncate_body(request.body, request.body_size),
+                body_preview=request.body or None,
                 body_size=request.body_size,
+                observed_at_ns=request.observed_at_ns,
             )
         )
     return items
@@ -475,6 +508,7 @@ def build_mcp_evidence(server: RunningServer) -> list[Evidence]:
             resource_key=call.resource_key,
             sensitive=call.sensitive,
             tool_arguments=dict(call.query_arguments) if call.query_arguments else None,
+            observed_at_ns=call.observed_at_ns,
         )
         for call in calls_snapshot
     ]

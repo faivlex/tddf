@@ -81,10 +81,48 @@ class ServerState:
 def parse_jsonrpc_request(raw: str) -> tuple[dict[str, Any] | None, JsonRpcError | None]:
     """Return ``(parsed, None)`` on success or ``(None, error)`` if the bytes
     are not a well-formed JSON-RPC 2.0 request."""
+    payload, error = parse_jsonrpc_payload(raw)
+    if error is not None:
+        return None, error
+    if not isinstance(payload, dict):
+        return None, JsonRpcError(
+            ERROR_INVALID_REQUEST,
+            "Invalid Request: top-level JSON must be an object",
+        )
+    return validate_jsonrpc_request_obj(payload)
+
+
+def parse_jsonrpc_payload(
+    raw: str,
+) -> tuple[dict[str, Any] | list[dict[str, Any]] | None, JsonRpcError | None]:
+    """Parse a single JSON-RPC message or batch payload."""
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:
         return None, JsonRpcError(ERROR_PARSE, f"Parse error: {exc}")
+    if isinstance(data, list):
+        if not data:
+            return None, JsonRpcError(
+                ERROR_INVALID_REQUEST,
+                "Invalid Request: batch payload must not be empty",
+            )
+        if not all(isinstance(item, dict) for item in data):
+            return None, JsonRpcError(
+                ERROR_INVALID_REQUEST,
+                "Invalid Request: batch items must be objects",
+            )
+        return data, None
+    if isinstance(data, dict):
+        return data, None
+    return None, JsonRpcError(
+        ERROR_INVALID_REQUEST,
+        "Invalid Request: top-level JSON must be an object",
+    )
+
+
+def validate_jsonrpc_request_obj(
+    data: Any,
+) -> tuple[dict[str, Any] | None, JsonRpcError | None]:
     if not isinstance(data, dict):
         return None, JsonRpcError(
             ERROR_INVALID_REQUEST,
@@ -101,6 +139,45 @@ def parse_jsonrpc_request(raw: str) -> tuple[dict[str, Any] | None, JsonRpcError
             "Invalid Request: missing or non-string method field",
         )
     return data, None
+
+
+def is_jsonrpc_response(data: Any) -> bool:
+    return (
+        isinstance(data, dict)
+        and data.get("jsonrpc") == "2.0"
+        and "method" not in data
+        and ("result" in data or "error" in data)
+    )
+
+
+def dispatch_payload(
+    payload: dict[str, Any] | list[dict[str, Any]],
+    state: ServerState,
+) -> list[JsonRpcResponse]:
+    """Dispatch a single JSON-RPC payload or batch.
+
+    Client responses are accepted and ignored; notifications produce no
+    response entries.
+    """
+    items = payload if isinstance(payload, list) else [payload]
+    responses: list[JsonRpcResponse] = []
+    for item in items:
+        if is_jsonrpc_response(item):
+            continue
+        request, error = validate_jsonrpc_request_obj(item)
+        if error is not None:
+            item_id = item.get("id") if isinstance(item, dict) else None
+            responses.append(JsonRpcResponse(id=item_id, error=error))
+            continue
+        assert request is not None
+        response = dispatch(request, state)
+        if response is not None:
+            responses.append(response)
+    return responses
+
+
+def is_supported_protocol_version(version: str) -> bool:
+    return version in _SUPPORTED_PROTOCOL_VERSIONS
 
 
 def dispatch(
@@ -169,9 +246,14 @@ def _handle_initialize(params: dict[str, Any], state: ServerState) -> dict[str, 
     else:
         negotiated = _SUPPORTED_PROTOCOL_VERSIONS[0]
     state.negotiated_protocol_version = negotiated
+    capabilities: dict[str, dict[str, Any]] = {"tools": {}}
+    if any(
+        name in state.config.allowed_tools for name in ("list_resources", "read_resource")
+    ):
+        capabilities["resources"] = {}
     return {
         "protocolVersion": negotiated,
-        "capabilities": {"tools": {}, "resources": {}},
+        "capabilities": capabilities,
         "serverInfo": {
             "name": TDDF_MCP_SERVER_NAME,
             "version": TDDF_MCP_SERVER_VERSION,
@@ -196,36 +278,26 @@ def _handle_tools_call(
     raw_args = params.get("arguments") or {}
     if not isinstance(raw_args, dict):
         raise InvalidParams("tools/call 'arguments' must be an object")
-    arguments = {str(k): str(v) for k, v in raw_args.items()}
+    arguments = {str(k): v for k, v in raw_args.items()}
 
     sensitive = state.config.is_sensitive_tool(name)
+    builtin_allowed = name in state.config.allowed_tools
 
     # Built-in surface stays as-is.
     if name == "list_resources":
+        if not builtin_allowed:
+            return _disallowed_tool_response(state, name, arguments, sensitive)
         return _call_list_resources(state, arguments, sensitive)
     if name == "read_resource":
+        if not builtin_allowed:
+            return _disallowed_tool_response(state, name, arguments, sensitive)
         return _call_read_resource(state, arguments, sensitive)
 
     custom_tool = next(
         (tool for tool in state.config.tools if tool.name == name), None
     )
     if custom_tool is None:
-        # Record the disallowed attempt so evaluators can still see it.
-        _record_call(
-            state,
-            McpCall(
-                tool_name=name,
-                resource_key=None,
-                sensitive=sensitive,
-                allowed=False,
-                tool_sensitive=sensitive,
-                resource_sensitive=False,
-                query_arguments=arguments,
-            ),
-        )
-        return _text_content(
-            f"Tool not allowed: {name}", is_error=True
-        )
+        return _disallowed_tool_response(state, name, arguments, sensitive)
 
     rendered = _render_tool_response(custom_tool.response_template, arguments)
     _record_call(
@@ -246,6 +318,7 @@ def _handle_tools_call(
 def _handle_resources_list(
     params: dict[str, Any], state: ServerState
 ) -> dict[str, Any]:
+    _require_allowed_resource_method(state, "list_resources")
     entries = [
         {
             "uri": f"mcp://tddf/{resource.key}",
@@ -266,6 +339,7 @@ def _handle_resources_read(
         raise InvalidParams("resources/read requires a string 'uri' field")
     # Accept either ``mcp://tddf/<key>`` or bare ``<key>`` for ergonomic wins.
     key = uri.split("/")[-1] if "://" in uri else uri
+    _require_allowed_resource_method(state, "read_resource", {"key": key})
     resource = state.resources.get(key)
     if resource is None:
         raise InvalidParams(f"Unknown resource: {uri}")
@@ -338,26 +412,32 @@ def _tool_descriptor(tool: McpToolConfig) -> dict[str, Any]:
 def _builtin_tool_descriptors(config: McpConfig) -> list[dict[str, Any]]:
     """Descriptors for ``list_resources`` / ``read_resource`` so real MCP
     clients can discover the legacy surface via ``tools/list``."""
-    return [
-        {
-            "name": "list_resources",
-            "description": "List MCP resources declared in the TDDF config.",
-            "inputSchema": {"type": "object", "properties": {}, "required": []},
-        },
-        {
-            "name": "read_resource",
-            "description": "Read a named MCP resource by its key.",
-            "inputSchema": {
-                "type": "object",
-                "properties": {"key": {"type": "string"}},
-                "required": ["key"],
-            },
-        },
-    ]
+    descriptors: list[dict[str, Any]] = []
+    if "list_resources" in config.allowed_tools:
+        descriptors.append(
+            {
+                "name": "list_resources",
+                "description": "List MCP resources declared in the TDDF config.",
+                "inputSchema": {"type": "object", "properties": {}, "required": []},
+            }
+        )
+    if "read_resource" in config.allowed_tools:
+        descriptors.append(
+            {
+                "name": "read_resource",
+                "description": "Read a named MCP resource by its key.",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"key": {"type": "string"}},
+                    "required": ["key"],
+                },
+            }
+        )
+    return descriptors
 
 
 def _call_list_resources(
-    state: ServerState, arguments: dict[str, str], sensitive: bool
+    state: ServerState, arguments: dict[str, object], sensitive: bool
 ) -> dict[str, Any]:
     _record_call(
         state,
@@ -382,10 +462,10 @@ def _call_list_resources(
 
 
 def _call_read_resource(
-    state: ServerState, arguments: dict[str, str], tool_sensitive: bool
+    state: ServerState, arguments: dict[str, object], tool_sensitive: bool
 ) -> dict[str, Any]:
     key = arguments.get("key")
-    if not key:
+    if not isinstance(key, str) or not key:
         raise InvalidParams("read_resource requires a 'key' argument")
     resource = state.resources.get(key)
     if resource is None:
@@ -412,6 +492,51 @@ def _call_read_resource(
         },
     }
     return _text_content(json.dumps(payload))
+
+
+def _disallowed_tool_response(
+    state: ServerState,
+    name: str,
+    arguments: dict[str, object],
+    sensitive: bool,
+) -> dict[str, Any]:
+    # Record the disallowed attempt so evaluators can still see it.
+    _record_call(
+        state,
+        McpCall(
+            tool_name=name,
+            resource_key=None,
+            sensitive=sensitive,
+            allowed=False,
+            tool_sensitive=sensitive,
+            resource_sensitive=False,
+            query_arguments=arguments,
+        ),
+    )
+    return _text_content(f"Tool not allowed: {name}", is_error=True)
+
+
+def _require_allowed_resource_method(
+    state: ServerState,
+    tool_name: str,
+    arguments: dict[str, object] | None = None,
+) -> None:
+    if tool_name in state.config.allowed_tools:
+        return
+    sensitive = state.config.is_sensitive_tool(tool_name)
+    _record_call(
+        state,
+        McpCall(
+            tool_name=tool_name,
+            resource_key=(arguments or {}).get("key") if arguments else None,
+            sensitive=sensitive,
+            allowed=False,
+            tool_sensitive=sensitive,
+            resource_sensitive=False,
+            query_arguments=arguments or {},
+        ),
+    )
+    raise InvalidParams(f"{tool_name} is not allowed")
 
 
 def _record_call(state: ServerState, entry: McpCall) -> None:

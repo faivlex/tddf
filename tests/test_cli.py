@@ -473,6 +473,43 @@ def test_install_hook_pre_commit_stage(
     assert (tmp_path / ".git" / "hooks" / "pre-commit").exists()
 
 
+def test_install_hook_resolves_gitdir_file(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
+) -> None:
+    real_git_dir = tmp_path / ".real-git"
+    (real_git_dir / "hooks").mkdir(parents=True)
+    (tmp_path / ".git").write_text(f"gitdir: {real_git_dir.name}\n")
+    monkeypatch.chdir(tmp_path)
+
+    result = runner.invoke(app, ["install-hook"])
+    assert result.exit_code == 0
+    assert (real_git_dir / "hooks" / "pre-push").exists()
+
+
+def test_install_hook_from_subdirectory_uses_resolved_paths(
+    tmp_path: Path, monkeypatch: "pytest.MonkeyPatch"
+) -> None:
+    (tmp_path / ".git" / "hooks").mkdir(parents=True)
+    subdir = tmp_path / "app"
+    subdir.mkdir()
+    monkeypatch.chdir(subdir)
+
+    result = runner.invoke(
+        app,
+        [
+            "install-hook",
+            "--config",
+            "configs/tddf.yaml",
+            "--baseline",
+            ".tddf/baseline.json",
+        ],
+    )
+    assert result.exit_code == 0
+    body = (tmp_path / ".git" / "hooks" / "pre-push").read_text()
+    assert f'--config "{(subdir / "configs/tddf.yaml").resolve()}"' in body
+    assert f'--baseline "{(subdir / ".tddf/baseline.json").resolve()}"' in body
+
+
 def _write_snapshot_enabled_config(
     path: Path,
     agent_fixture: str,

@@ -13,29 +13,63 @@ from pathlib import Path
 from typing import Callable, Iterable
 
 
-def _snapshot_mtimes(paths: Iterable[Path]) -> dict[Path, float | None]:
+def _normalize_paths(paths: Iterable[Path]) -> set[Path]:
+    return {Path(path).resolve() for path in paths}
+
+
+def _is_ignored(path: Path, ignored_paths: set[Path]) -> bool:
+    resolved = path.resolve()
+    return any(resolved == ignored or resolved.is_relative_to(ignored) for ignored in ignored_paths)
+
+
+def _expand_watch_paths(path: Path) -> set[Path]:
+    """Expand a watched path to the concrete filesystem entries whose mtimes
+    should be tracked. Directories recursively include their descendants so
+    edits under ``--watch src`` trigger re-runs too."""
+    expanded = {path}
+    try:
+        if path.is_dir():
+            expanded.update(child for child in path.rglob("*"))
+    except OSError:
+        return {path}
+    return expanded
+
+
+def _snapshot_mtimes(
+    paths: Iterable[Path],
+    ignored_paths: Iterable[Path] | None = None,
+) -> dict[Path, float | None]:
     """Return a ``{path: mtime}`` snapshot. Missing paths map to ``None``
     so they can reappear later and be detected as a change."""
     snapshot: dict[Path, float | None] = {}
+    ignored = _normalize_paths(ignored_paths or [])
     for path in paths:
-        try:
-            snapshot[path] = path.stat().st_mtime
-        except FileNotFoundError:
-            snapshot[path] = None
-        except OSError:
-            snapshot[path] = None
+        for candidate in _expand_watch_paths(path):
+            if ignored and _is_ignored(candidate, ignored):
+                continue
+            try:
+                snapshot[candidate] = candidate.stat().st_mtime
+            except FileNotFoundError:
+                snapshot[candidate] = None
+            except OSError:
+                snapshot[candidate] = None
     return snapshot
 
 
 def detect_changes(
     previous: dict[Path, float | None],
     paths: Iterable[Path],
+    ignored_paths: Iterable[Path] | None = None,
 ) -> tuple[dict[Path, float | None], list[Path]]:
     """Compare the previous snapshot against a fresh one. Returns
     ``(current_snapshot, [paths_that_changed_or_appeared_or_disappeared])``.
     The first element is always returned so callers can carry it forward."""
-    current = _snapshot_mtimes(paths)
-    changed = [path for path, mtime in current.items() if previous.get(path) != mtime]
+    current = _snapshot_mtimes(paths, ignored_paths)
+    changed = [
+        path
+        for path in sorted(set(previous) | set(current))
+        if previous.get(path) != current.get(path)
+    ]
     return current, changed
 
 
@@ -44,6 +78,7 @@ def run_watch(
     run_once: Callable[[], int],
     *,
     interval: float = 0.5,
+    ignored_paths: Callable[[], Iterable[Path]] | Iterable[Path] | None = None,
     clock: Callable[[], datetime] | None = None,
     notify: Callable[[str], None] | None = None,
 ) -> None:
@@ -63,17 +98,24 @@ def run_watch(
     emit = notify if notify is not None else print
     now = clock if clock is not None else datetime.now
 
+    def _current_ignored() -> Iterable[Path]:
+        if ignored_paths is None:
+            return []
+        if callable(ignored_paths):
+            return ignored_paths()
+        return ignored_paths
+
     emit(f"tddf watch · started at {now().strftime('%H:%M:%S')}")
     for path in resolved_paths:
         emit(f"tddf watch · watching {path}")
 
-    last = _snapshot_mtimes(resolved_paths)
+    last = _snapshot_mtimes(resolved_paths, _current_ignored())
 
     try:
         run_once()
         while True:
             time.sleep(interval)
-            last, changed = detect_changes(last, resolved_paths)
+            last, changed = detect_changes(last, resolved_paths, _current_ignored())
             if changed:
                 changed_label = ", ".join(str(path) for path in changed)
                 emit(
