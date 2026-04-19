@@ -25,7 +25,12 @@ from tddf.runner import (
     execute_run,
 )
 from tddf.servers import CapturedRequest, McpCall, McpCapture, RequestCapture
-from tddf.target import build_target_invocation, describe_target, resolve_artifacts_dir
+from tddf.target import (
+    _extract_openclaw_result,
+    build_target_invocation,
+    describe_target,
+    resolve_artifacts_dir,
+)
 from tddf.traps import build_document_content, build_html_page
 
 ROOT = Path(".").resolve()
@@ -272,9 +277,20 @@ def test_openclaw_target_invocation_builds_expected_command_and_home(
     assert openclaw_config.exists()
     assert '"tddf": {' in openclaw_config.read_text()
     assert "http://example.test/mcp" in openclaw_config.read_text()
+    assert '"transport": "streamable-http"' in openclaw_config.read_text()
 
     for cleanup_dir in invocation.cleanup_dirs:
         cleanup_dir.cleanup()
+
+
+def test_extract_openclaw_result_falls_back_to_stderr_json() -> None:
+    payload, error = _extract_openclaw_result(
+        "",
+        '[bundle-mcp] warning\n{"status":"completed","result":{"payloads":[{"text":"OK"}]}}\n',
+    )
+    assert error is None
+    assert payload is not None
+    assert payload["status"] == "completed"
 
 
 def test_langgraph_target_invocation_builds_expected_command(tmp_path: Path) -> None:

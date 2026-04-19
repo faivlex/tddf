@@ -377,7 +377,13 @@ def _maybe_prepare_openclaw_home(
         if isinstance(mcp_payload, dict):
             servers_payload = mcp_payload.setdefault("servers", {})
             if isinstance(servers_payload, dict):
-                servers_payload["tddf"] = {"url": mcp_url}
+                # OpenClaw treats bare ``url`` servers as legacy SSE by
+                # default. TDDF serves JSON-RPC over streamable HTTP, so force
+                # the matching transport explicitly.
+                servers_payload["tddf"] = {
+                    "url": mcp_url,
+                    "transport": "streamable-http",
+                }
     config_path.write_text(json.dumps(config_payload, indent=2) + "\n")
 
     artifact_contents: dict[str, str] = {}
@@ -729,19 +735,47 @@ def _extract_claude_agent_sdk_trace(
     return _extract_trace(stdout, "TDDF_CLAUDE_AGENT_SDK_TRACE=")
 
 
-def _extract_openclaw_result(
-    stdout: str,
+def _extract_json_value_from_text(
+    text: str,
 ) -> tuple[dict[str, object] | None, str | None]:
-    text = stdout.strip()
+    text = text.strip()
     if not text:
         return None, None
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as error:
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(text):
+            if char not in "[{":
+                continue
+            try:
+                payload, end = decoder.raw_decode(text[index:])
+            except json.JSONDecodeError:
+                continue
+            if text[index + end :].strip():
+                continue
+            if isinstance(payload, dict):
+                return payload, None
+            return {"value": payload}, None
         return None, str(error)
     if isinstance(payload, dict):
         return payload, None
     return {"value": payload}, None
+
+
+def _extract_openclaw_result(
+    stdout: str,
+    stderr: str,
+) -> tuple[dict[str, object] | None, str | None]:
+    stdout_payload, stdout_error = _extract_json_value_from_text(stdout)
+    if stdout_payload is not None:
+        return stdout_payload, None
+
+    stderr_payload, stderr_error = _extract_json_value_from_text(stderr)
+    if stderr_payload is not None:
+        return stderr_payload, None
+
+    return None, stdout_error or stderr_error
 
 
 def collect_adapter_observability(
@@ -811,7 +845,7 @@ def collect_adapter_observability(
                 json.dumps(trace_payload, indent=2) + "\n"
             )
     elif invocation.adapter_name == "openclaw":
-        result_payload, result_error = _extract_openclaw_result(stdout)
+        result_payload, result_error = _extract_openclaw_result(stdout, stderr)
         adapter_metadata["stdout_line_count"] = len(stdout.splitlines())
         adapter_metadata["stderr_line_count"] = len(stderr.splitlines())
         adapter_metadata["json_captured"] = result_payload is not None
