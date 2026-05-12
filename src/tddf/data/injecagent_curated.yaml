@@ -13,6 +13,7 @@ traps:
   - owasp:llm07
   - nist:manage-2.1
   - mitre:AML.T0051
+  - iso42001:8.3
   - eu-ai-act:article-15
   tags:
   - injecagent
@@ -87,6 +88,7 @@ traps:
   - owasp:llm07
   - nist:manage-2.1
   - mitre:AML.T0051
+  - iso42001:8.3
   - eu-ai-act:article-15
   tags:
   - injecagent

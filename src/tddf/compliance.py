@@ -11,12 +11,14 @@ DEFAULT_FRAMEWORKS_BY_FAMILY: dict[str, list[str]] = {
         "nist:map-4.1",
         "mitre:AML.T0051",
         "iso42001:8.2",
+        "eu-ai-act:article-15",
     ],
     "behavioural_control": [
         "owasp:llm01",
         "owasp:llm07",
         "nist:manage-2.1",
         "mitre:AML.T0051",
+        "iso42001:8.3",
         "eu-ai-act:article-15",
     ],
     "oversight_evasion": [
@@ -31,12 +33,14 @@ DEFAULT_FRAMEWORKS_BY_FAMILY: dict[str, list[str]] = {
         "nist:map-4.1",
         "mitre:AML.T0051",
         "iso42001:8.2",
+        "eu-ai-act:article-15",
     ],
     "mcp_tool_abuse": [
         "owasp:llm07",
         "nist:manage-2.1",
         "mitre:AML.T0051",
         "iso42001:8.2",
+        "eu-ai-act:article-15",
     ],
 }
 
