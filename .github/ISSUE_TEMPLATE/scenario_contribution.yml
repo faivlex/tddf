@@ -1,0 +1,61 @@
+name: Scenario contribution
+description: Propose a new scenario, trap family, or curated payload pack for TDDF.
+labels: ["scenario", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Scenario contributions are how TDDF's coverage grows. Please anchor your proposal in a real, documented attack pattern (CVE, published paper, public incident, or named research benchmark) rather than a speculative one.
+  - type: input
+    id: pattern-name
+    attributes:
+      label: Attack pattern name
+      description: A short identifier (e.g. `echoleak-style`, `wasp-style`, `confused-deputy-finance`).
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Research source / reference
+      description: Link the paper, CVE, blog post, or benchmark entry that documents this pattern. Include the citation if academic.
+    validations:
+      required: true
+  - type: textarea
+    id: scenario
+    attributes:
+      label: Proposed scenario YAML
+      description: A complete or near-complete `tddf.yaml` scenario fragment that exercises the pattern.
+      render: yaml
+    validations:
+      required: true
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      options:
+        - critical
+        - high
+        - medium
+        - low
+    validations:
+      required: true
+  - type: textarea
+    id: licensing
+    attributes:
+      label: Licensing and attribution
+      description: |
+        If the scenario is derived from a third-party benchmark or dataset, state the upstream license and any attribution required.
+        See `THIRD_PARTY_LICENSES.md` for the format used by AgentDojo and InjecAgent.
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I have the right to contribute this scenario under TDDF's MIT license.
+          required: true
+        - label: The scenario targets only mock servers / mock tools provided by TDDF, not third-party systems.
+          required: true
+        - label: I have searched existing scenarios for duplicates.
+          required: true

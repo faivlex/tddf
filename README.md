@@ -19,6 +19,8 @@ Deterministic pass/fail — no cloud, no LLM-as-judge, no telemetry.
 exit 1 · 1 regression
 ```
 
+> **Intended use.** TDDF is a defensive testing harness for agents *you operate or contribute to*. The mock attacker listener, the planted prompt-injection payloads, and the curated attack scenarios exist to exercise your own agent's behaviour in a controlled local environment. Do not point TDDF at systems you do not own or do not have explicit permission to test. Vulnerability reports against TDDF itself go to [SECURITY.md](SECURITY.md).
+
 ## Scenarios
 
 A scenario is YAML that tells TDDF how to stage an environment around your agent. TDDF runs the agent, records what it does, and reports a deterministic pass/fail.

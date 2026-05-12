@@ -1,0 +1,54 @@
+name: Feature request
+description: Propose a new capability or improvement to TDDF.
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Before filing, please skim [open Discussions](https://github.com/gonzalosr/tddf/discussions) — many ideas start there. File a feature request when the idea is concrete enough to scope.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation you're in and why the current behaviour is insufficient. Lead with the problem, not the solution.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work? Concrete `tddf.yaml` snippets or CLI examples are very welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: What workarounds exist today? What other approaches did you consider and rule out?
+    validations:
+      required: false
+  - type: dropdown
+    id: scope
+    attributes:
+      label: Scope
+      description: Which area of TDDF would this touch?
+      options:
+        - CLI / UX
+        - Runner / evaluator
+        - Trap families or delivery strategies
+        - Adapters (LangGraph, OpenAI Agents, Hermes, OpenClaw, etc.)
+        - MCP protocol surface
+        - Importers (AgentDojo, InjecAgent, …)
+        - Docs / examples
+        - Other (explain in proposal)
+    validations:
+      required: true
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I have searched existing issues and discussions for duplicates.
+          required: true
+        - label: I understand TDDF is local-first and deterministic; this proposal does not require LLM-as-judge or cloud telemetry.
+          required: true

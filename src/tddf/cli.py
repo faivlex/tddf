@@ -101,7 +101,9 @@ app = typer.Typer(
         "TDDF — behaviour regression tests for AI agents.\n\n"
         "Runs your agent against local mock servers with planted traps and checks "
         "deterministically whether the agent leaks data or abuses sensitive tools. "
-        "Scenarios live in your repo. No LLM-as-judge. Nothing uploaded."
+        "Scenarios live in your repo. No LLM-as-judge. Nothing uploaded.\n\n"
+        "Intended use: defensive testing of agents you operate or contribute to. "
+        "Do not point TDDF at systems you do not own or have permission to test."
     ),
     epilog=(
         "Examples:\n"

@@ -4,6 +4,7 @@ version = "2026.4.1"
 description = "Behaviour regression tests for AI agents — deterministic, local-first, framework-agnostic"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
 requires-python = ">=3.12"
 keywords = ["agents", "testing", "ci", "regression", "mcp", "prompt-injection"]
 classifiers = [

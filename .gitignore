@@ -1,14 +1,51 @@
+# Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.egg-info/
+.Python
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.whl
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# OS
 .DS_Store
+Thumbs.db
+
+# TDDF run artifacts
 .tddf/
 !.tddf/baseline.json
 !.tddf/snapshots/
 !.tddf/snapshots/**
+
+# TDDF smoke / scratch directories
 .smoke/
+.tddf-smoke/
+agentdojo-full/
+agentdojo-check/
+hermes-smoke.yaml
+watch-trigger.txt
+
+# Editor / tooling local config
 .claude/
-.ruff_cache/
+.idea/
+.vscode/
 
 # Internal planning — kept locally, not published
 tasks/
 tddf.md
+.scripts/

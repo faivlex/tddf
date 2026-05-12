@@ -1,0 +1,82 @@
+name: Bug report
+description: Something in TDDF is broken or behaves unexpectedly.
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to file a bug. Please run `tddf --version` and include the output below.
+
+        For security issues, **do not file a public bug** — use [private vulnerability reporting](https://github.com/gonzalosr/tddf/security/advisories/new) instead.
+  - type: input
+    id: version
+    attributes:
+      label: TDDF version
+      description: Output of `tddf --version`.
+      placeholder: e.g. 2026.4.1
+    validations:
+      required: true
+  - type: input
+    id: python
+    attributes:
+      label: Python version
+      description: Output of `python --version`.
+      placeholder: e.g. 3.12.3
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: e.g. macOS 14.5 arm64, Ubuntu 22.04, Windows 11
+    validations:
+      required: true
+  - type: dropdown
+    id: adapter
+    attributes:
+      label: Adapter
+      description: Which target adapter were you using?
+      options:
+        - command
+        - hermes
+        - openclaw
+        - langgraph
+        - openai-agents
+        - claude-agent-sdk
+        - other (specify in details)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear and concise description of the bug, including what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal reproduction
+      description: |
+        Smallest `tddf.yaml` (or scenario fragment) and exact command that reproduces the issue.
+        Use code fences. Redact any real secrets.
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: Output from `tddf run` (or relevant command). Wrap in a code fence.
+      render: shell
+    validations:
+      required: false
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Pre-flight
+      options:
+        - label: I have searched existing issues for duplicates.
+          required: true
+        - label: I confirm this is not a security vulnerability (which goes via private reporting).
+          required: true
