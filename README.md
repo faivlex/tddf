@@ -1,12 +1,11 @@
 # TDDF
+<sub>-*Timeo Danaos et Dona Ferentes*-</sub>
 
 [![PyPI](https://img.shields.io/pypi/v/tddf)](https://pypi.org/project/tddf/)
 [![Python](https://img.shields.io/pypi/pyversions/tddf)](https://pypi.org/project/tddf/)
 [![CI](https://github.com/faivlex/tddf/actions/workflows/ci.yml/badge.svg)](https://github.com/faivlex/tddf/actions/workflows/ci.yml)
 
-<sub>-*Timeo Danaos et Dona Ferentes*-</sub>
-
-
+---
 **Local behaviour regression tests for AI agents — stored as audit evidence.**
 
 Write attack scenarios in YAML, commit them, run them on every PR. Catch when a prompt tweak, model swap, or framework upgrade makes your agent start exfiltrating secrets, abusing tools, or following planted instructions. Every failure carries the OWASP LLM / NIST AI RMF / MITRE ATLAS / ISO 42001 / EU AI Act control it violates.
