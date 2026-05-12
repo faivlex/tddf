@@ -12,7 +12,10 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      # Only fire for semver/CalVer-shaped tags (v2026.4.1, v2026.5.0rc1, v1.2.3).
+      # The floating-major Action tag `v1` (used for Marketplace `uses: @v1`)
+      # would otherwise trigger and fail the version-match guard.
+      - "v*.*.*"
   workflow_dispatch:
     inputs:
       ref:
