@@ -1,6 +1,10 @@
 name: Run TDDF
 description: Run behaviour regression tests for AI agents in CI; upload JUnit and scenario artifacts.
 
+branding:
+  icon: shield
+  color: red
+
 inputs:
   config:
     description: Path to the TDDF config file.
