@@ -65,6 +65,8 @@ For pinning specific tool-call sequences, baseline mode, snapshot tests, and the
 
 ## What's built in
 
+Trap families follow the [*AI Agent Traps* taxonomy](https://papers.ssrn.com/sol3/papers.cfm?abstract_id=6372438) (Franklin et al., Google DeepMind, March 2026).
+
 | Trap family | What gets planted | Applies to |
 |---|---|---|
 | Web injection | Hidden instructions in a mock web page | Research / browsing / RAG-over-web agents |
