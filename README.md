@@ -1,4 +1,9 @@
 # TDDF
+
+[![PyPI](https://img.shields.io/pypi/v/tddf)](https://pypi.org/project/tddf/)
+[![Python](https://img.shields.io/pypi/pyversions/tddf)](https://pypi.org/project/tddf/)
+[![CI](https://github.com/faivlex/tddf/actions/workflows/ci.yml/badge.svg)](https://github.com/faivlex/tddf/actions/workflows/ci.yml)
+
 <sub>-*Timeo Danaos et Dona Ferentes*-</sub>
 
 
