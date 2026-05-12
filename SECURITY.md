@@ -7,7 +7,7 @@ TDDF is a defensive testing harness. Vulnerabilities in TDDF itself — in the e
 **Do not file a public issue for security reports.** Use one of the private channels below:
 
 1. **Preferred — GitHub private vulnerability reporting**: open a draft advisory at <https://github.com/faivlex/tddf/security/advisories/new>. This is end-to-end private until publication.
-2. **Email**: `security@TBD` *(this address will be live once task 48 — domain registration — completes; until then, please use channel 1 above).*
+2. **Email**: `security@faivlex.com` — encrypt with PGP if the issue is sensitive (key fingerprint published at the same address on request).
 
 Please include:
 

@@ -1,0 +1,83 @@
+name: Release
+
+# Builds and publishes TDDF to PyPI via OpenID Connect trusted publishing.
+# No PyPI API tokens are stored anywhere — the workflow exchanges a short-lived
+# GitHub OIDC token for upload credentials directly with PyPI at publish time.
+#
+# Trigger: push a tag matching `v*` (e.g. `v2026.4.1`, `v2026.5.0rc1`).
+# PyPI's trusted-publisher binding requires that the tag-pushing workflow
+# match the configuration on https://pypi.org/manage/account/publishing/ —
+# specifically: owner=faivlex, repo=tddf, workflow=release.yml, environment=pypi.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Git ref (branch / tag / sha) to build and publish."
+        required: true
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build wheel and sdist
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Show build output
+        run: ls -la dist/
+
+      - name: Verify wheel metadata
+        run: |
+          uv run --with twine -- twine check dist/*
+
+      - name: Upload distributions as workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/tddf
+    permissions:
+      id-token: write   # required for OIDC token exchange with PyPI
+    steps:
+      - name: Download distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # No `password` / `user` fields — trusted publishing handles auth via
+          # the OIDC token exchanged at runtime. The action picks this up
+          # automatically when `id-token: write` is set above.
