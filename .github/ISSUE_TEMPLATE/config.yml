@@ -3,6 +3,3 @@ contact_links:
   - name: Security vulnerability
     url: https://github.com/faivlex/tddf/security/advisories/new
     about: Report a security issue in TDDF privately via GitHub's coordinated disclosure flow. Do not open a public issue for vulnerabilities. See SECURITY.md.
-  - name: Question or discussion
-    url: https://github.com/faivlex/tddf/discussions
-    about: For open-ended questions, design discussion, or "how do I..." — use Discussions, not Issues.

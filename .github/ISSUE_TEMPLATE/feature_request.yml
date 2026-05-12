@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Before filing, please skim [open Discussions](https://github.com/faivlex/tddf/discussions) — many ideas start there. File a feature request when the idea is concrete enough to scope.
+        Before filing, please [search existing issues](https://github.com/faivlex/tddf/issues?q=is%3Aissue) — your idea may already be in flight. File a feature request when the idea is concrete enough to scope.
   - type: textarea
     id: problem
     attributes:
