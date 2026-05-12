@@ -1,8 +1,10 @@
 # TDDF
-<sub>*Timeo Danaos et Dona Ferentes. What Laocoön would tell your agent.*</sub>
+<sub>-*Timeo Danaos et Dona Ferentes*-</sub>
 
 
-**Local behaviour regression tests for AI agents.** Write scenarios in YAML, commit them, run them on every PR. Catch when a prompt tweak, model swap, or framework upgrade makes your agent start exfiltrating secrets, abusing tools, or following planted instructions.
+**Local behaviour regression tests for AI agents.** 
+
+Write scenarios in YAML, commit them, run them on every PR. Catch when a prompt tweak, model swap, or framework upgrade makes your agent start exfiltrating secrets, abusing tools, or following planted instructions.
 
 Deterministic pass/fail — no cloud, no LLM-as-judge, no telemetry.
 
@@ -19,7 +21,7 @@ Deterministic pass/fail — no cloud, no LLM-as-judge, no telemetry.
 exit 1 · 1 regression
 ```
 
-> **Intended use.** TDDF is a defensive testing harness for agents *you operate or contribute to*. The mock attacker listener, the planted prompt-injection payloads, and the curated attack scenarios exist to exercise your own agent's behaviour in a controlled local environment. Do not point TDDF at systems you do not own or do not have explicit permission to test. Vulnerability reports against TDDF itself go to [SECURITY.md](SECURITY.md).
+> **Intended use.** TDDF is a defensive testing harness for agents *you operate or contribute to*. Do not point TDDF at systems you do not own or do not have explicit permission to test.
 
 ## Scenarios
 
@@ -106,7 +108,9 @@ Each scenario combines three parts: a *trap family* (what's being tested), a *de
 | Sensitive tool access | A mock MCP surface with marked-sensitive resources | Any agent with an MCP tool layer |
 | Multi-turn context poisoning | Injection planted in turn 1, triggered in turn 2 | Conversational / stateful agents |
 
-**Delivery techniques** — any family can hide its payload via HTML comment, `display:none`, `aria-label`, `<meta>`, Markdown comment, or white-on-white text. **Encoding strategies** — base64, ROT13, leetspeak, homoglyph substitution — wrap any delivery. A new technique composes with every family — no extra wiring.
+**Delivery techniques** — any family can hide its payload via HTML comment, `display:none`, `aria-label`, `<meta>`, Markdown comment, or white-on-white text. 
+
+**Encoding strategies** — base64, ROT13, leetspeak, homoglyph substitution — wrap any delivery. A new technique composes with every family — no extra wiring.
 
 **Every payload is paper-cited.** Each `hidden_text` string is a named pattern drawn from published research — direct instruction override (Greshake 2023), WASP (Evtimov 2025), EchoLeak silent exfiltration (CVE-2025-32711), AgentDojo "important message" framing (Alizadeh 2025), audit-authority framing (Weinberg 2025), lost-in-middle positional injection (Liu 2024), and more. Failures name the pattern in their output. See [`src/tddf/payloads.py`](src/tddf/payloads.py) for the full library with citations.
 
@@ -123,31 +127,14 @@ scenarios_from_registry:
   - registries/agentdojo-banking.yaml   # from: tddf import agentdojo --suite banking --output ...
 ```
 
-- **[InjecAgent](https://github.com/uiuc-kang-lab/InjecAgent)** — 1,054 indirect-prompt-injection cases. Each case stages as a web or document trap; the structural evaluator gates on attacker-endpoint contact. Pull with `tddf import injecagent`.
-- **[AgentDojo](https://github.com/ethz-spylab/agentdojo)** — every case ships a ground-truth `FunctionCall` sequence, which the materialiser projects directly onto TDDF's semantic evaluator (`expected_attacker_calls`) so scenarios fail when the agent executes the *specific* tool-call pattern AgentDojo's attack was steering it toward. The mock MCP surface auto-registers whatever tools the imported cases reference. Needs the optional extra: `pip install 'tddf[agentdojo]'`, then `tddf import agentdojo --suite banking|workspace|slack|travel --output registries/agentdojo.yaml`.
+- **[InjecAgent](https://github.com/uiuc-kang-lab/InjecAgent)** — 1,054 indirect-prompt-injection cases.  Pull with `tddf import injecagent`.
+- **[AgentDojo](https://github.com/ethz-spylab/agentdojo)** — 949 attack cases across 4 task suites (banking, workspace, slack, travel). Needs the optional extra: `pip install 'tddf[agentdojo]'`, then `tddf import agentdojo --suite banking|workspace|slack|travel --output registries/agentdojo.yaml`.
 
 ## Framework-agnostic adapters
 
-The same scenario suite runs against any supported adapter — switching frameworks is a `target:` block change, not a scenario rewrite. Baselines, snapshots, and artefacts carry over unchanged.
+You can change adapters without rewriting scenarios. Baselines, snapshots, and artefacts carry over unchanged.
 
-```yaml
-# Before: LangGraph
-target:
-  kind: langgraph
-  langgraph:
-    graph: my_package.agent:graph
-    capabilities: [web, mcp]
-
-# After: Claude Agent SDK — every `scenarios:` entry below is untouched
-target:
-  kind: claude_agent_sdk
-  claude_agent_sdk:
-    capabilities: [web, mcp]
-    allowed_tools: [Read, Write, Bash]
-    use_temp_home: true
-```
-
-**Built-in adapters** (all invoked as subprocesses; all support multi-turn scenarios):
+**Built-in adapters**:
 
 | Adapter | Target |
 |---|---|
@@ -158,11 +145,11 @@ target:
 | `openai_agents` | [OpenAI Agents SDK](https://github.com/openai/openai-agents-python) |
 | `claude_agent_sdk` | [Claude Agent SDK](https://github.com/anthropics/claude-agent-sdk-python) |
 
-See [examples/configs/](examples/configs/) for one full working config per adapter.
+See [examples/configs/](examples/configs/) for a full working config per adapter.
 
 ## Compliance workflows
 
-TDDF is the evidence layer — the test suite that feeds a GRC workflow, not the sign-off itself. Three properties make the artefacts useful to auditors:
+TDDF can help as evidence layer:
 
 - Every trap family is tagged with OWASP LLM Top 10, NIST AI RMF, MITRE ATLAS, ISO 42001, and EU AI Act references — when a scenario fails, the run output names the specific control it maps to.
 - Every run writes per-scenario JSON (prompt, planted payload, observed actions, leaked secrets) plus a batch-level `junit.xml` under `.tddf/artifacts/<run_id>/` — consumable by any CI or GRC evidence system that ingests test reports.
@@ -219,7 +206,7 @@ In a GitHub workflow, the same gate is one step:
     extra-args: --baseline .tddf/baseline.json
 ```
 
-Artifacts (`result.json`, `stdout.txt`, `stderr.txt`, `junit.xml`, `baseline-diff.json`) upload automatically. Each failed scenario appears as a distinct test in the PR check summary via JUnit, with the planted payload, leaked secret, and offending request attached. Full docs: [docs/github-actions.md](docs/github-actions.md).
+Artifacts (`result.json`, `stdout.txt`, `stderr.txt`, `junit.xml`, `baseline-diff.json`) upload automatically. Each failed scenario appears as a distinct test in the PR check summary via JUnit, with the planted payload, leaked secret, and offending request attached. See: [docs/github-actions.md](docs/github-actions.md).
 
 ### Local dev loop
 
