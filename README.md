@@ -211,7 +211,7 @@ Commit `.tddf/baseline.json`. CI fails on regressions at or above `--fail-severi
 In a GitHub workflow, the same gate is one step:
 
 ```yaml
-- uses: gonzalosr/tddf@v1
+- uses: faivlex/tddf@v1
   with:
     config: tddf.yaml
     fail-severity: high

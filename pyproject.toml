@@ -5,6 +5,8 @@ description = "Behaviour regression tests for AI agents — deterministic, local
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_LICENSES.md"]
+authors = [{ name = "Faivlex LLC" }]
+maintainers = [{ name = "Faivlex LLC" }]
 requires-python = ">=3.12"
 keywords = ["agents", "testing", "ci", "regression", "mcp", "prompt-injection"]
 classifiers = [
@@ -25,9 +27,9 @@ dependencies = [
 agentdojo = ["agentdojo>=0.1.35,<0.2.0"]
 
 [project.urls]
-Homepage = "https://github.com/gonzalosr/tddf"
-Repository = "https://github.com/gonzalosr/tddf"
-Issues = "https://github.com/gonzalosr/tddf/issues"
+Homepage = "https://github.com/faivlex/tddf"
+Repository = "https://github.com/faivlex/tddf"
+Issues = "https://github.com/faivlex/tddf/issues"
 
 [project.scripts]
 tddf = "tddf.cli:app"

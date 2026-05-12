@@ -7,7 +7,7 @@ body:
       value: |
         Thanks for taking the time to file a bug. Please run `tddf --version` and include the output below.
 
-        For security issues, **do not file a public bug** — use [private vulnerability reporting](https://github.com/gonzalosr/tddf/security/advisories/new) instead.
+        For security issues, **do not file a public bug** — use [private vulnerability reporting](https://github.com/faivlex/tddf/security/advisories/new) instead.
   - type: input
     id: version
     attributes:

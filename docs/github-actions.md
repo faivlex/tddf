@@ -22,7 +22,7 @@ jobs:
       - name: Install project dependencies
         run: uv sync
 
-      - uses: gonzalosr/tddf@v1
+      - uses: faivlex/tddf@v1
         with:
           config: tddf.yaml
           fail-severity: high
@@ -44,7 +44,7 @@ tddf baseline save        # once, on a known-good commit, then commit .tddf/base
 Then in CI, run against the baseline so you only fail the build on genuine regressions:
 
 ```yaml
-- uses: gonzalosr/tddf@v1
+- uses: faivlex/tddf@v1
   with:
     config: tddf.yaml
     fail-severity: high

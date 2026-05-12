@@ -5,7 +5,7 @@ Issues, bug reports, and pull requests are welcome.
 ## Getting started
 
 ```bash
-git clone https://github.com/gonzalosr/tddf.git
+git clone https://github.com/faivlex/tddf.git
 cd tddf
 uv sync --group dev
 uv run pytest

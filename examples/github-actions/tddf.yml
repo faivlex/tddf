@@ -14,7 +14,7 @@ jobs:
       - name: Install project dependencies
         run: uv sync
 
-      - uses: gonzalosr/tddf@v1
+      - uses: faivlex/tddf@v1
         with:
           config: tddf.yaml
           fail-severity: high
