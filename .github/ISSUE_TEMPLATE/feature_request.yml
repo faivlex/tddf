@@ -48,7 +48,7 @@ body:
     attributes:
       label: Pre-flight
       options:
-        - label: I have searched existing issues and discussions for duplicates.
+        - label: I have searched existing issues for duplicates.
           required: true
         - label: I understand TDDF is local-first and deterministic; this proposal does not require LLM-as-judge or cloud telemetry.
           required: true
