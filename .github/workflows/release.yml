@@ -33,6 +33,18 @@ jobs:
         with:
           ref: ${{ inputs.ref || github.ref }}
 
+      - name: Verify tag matches pyproject.toml version
+        if: github.event_name == 'push'
+        run: |
+          set -euo pipefail
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PYPROJECT_VERSION=$(grep -E '^version = ' pyproject.toml | head -1 | sed -E 's/^version = "([^"]+)".*/\1/')
+          if [ "$TAG_VERSION" != "$PYPROJECT_VERSION" ]; then
+            echo "::error title=Version mismatch::Tag '${GITHUB_REF_NAME}' (parsed as '${TAG_VERSION}') does not match pyproject.toml version '${PYPROJECT_VERSION}'. Bump pyproject.toml or retag before publishing."
+            exit 1
+          fi
+          echo "✓ Tag ${GITHUB_REF_NAME} matches pyproject.toml version ${PYPROJECT_VERSION}"
+
       - name: Install uv
         uses: astral-sh/setup-uv@v3
         with:
